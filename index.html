@@ -14,7 +14,7 @@
 <title>Chic Distribution</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -500,8 +500,10 @@ function unlockAudio(){try{actx=actx||new(window.AudioContext||window.webkitAudi
 document.addEventListener("visibilitychange",()=>{if(!document.hidden){try{actx&&actx.state==="suspended"&&actx.resume()}catch(e){}if(S.mode==="resto")checkReminder();flush()}});
 function beep(f=880,d=.1){try{actx=actx||new(window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),g=actx.createGain();o.frequency.value=f;o.connect(g);g.connect(actx.destination);g.gain.setValueAtTime(.15,actx.currentTime);g.gain.exponentialRampToValueAtTime(.001,actx.currentTime+d);o.start();o.stop(actx.currentTime+d)}catch(e){}}
 function errMsg(e){return (e&&(e.message||e.error_description))||String(e)}
+/* Lecture complète par pages de 1000 (limite Supabase) */
+async function allRows(mk){let out=[];for(let i=0;i<200000;i+=1000){const{data,error}=await mk().range(i,i+999);if(error)throw error;out=out.concat(data||[]);if(!data||data.length<1000)break}return{data:out}}
 async function rpcRaw(fn,args){const{data,error}=await sb.rpc(fn,args);if(error)throw error;return data}
-async function rpc(fn,args){const{data,error}=await sb.rpc(fn,args);if(error){if(error.code==="28000"||/PIN/.test(error.message)){toast(t("wrong_pin"),"bad");if(S.mode==="admin"){S.adminPin="";SS.set("apin","")}}throw error}return data}
+async function rpc(fn,args){const{data,error}=await sb.rpc(fn,args);if(error){if(error.code==="28000"||/PIN/.test(error.message)){toast(t("wrong_pin"),"bad");if(S.mode==="admin"){S.adminPin="";SS.set("apin","")}else if(S.mode==="depot"&&/^depot_|^set_photo|^save_push/.test(fn))setTimeout(pinLost,600)}throw error}return data}
 
 /* ---------- Feuilles (bottom sheets) ---------- */
 function sheet(title,body,opts={}){const ov=h("div",{class:"ov",onclick:e=>{if(e.target===ov&&!opts.locked)close()}});const sh=h("div",{class:"sheet"},h("div",{class:"grab"}),title?h("h3",{},title):null,body);ov.append(sh);document.body.append(ov);function close(){ov.remove();opts.onClose&&opts.onClose()}return{close,el:sh}}
@@ -619,10 +621,10 @@ Object.assign(T.de,{slot_deliv:"Lieferungen",slot_title:"Empfohlene Lagerung",sl
 Object.assign(T.it,{slot_deliv:"consegne",slot_title:"Disposizione consigliata",slot_sub:"In base ai prelievi degli ultimi 90 giorni",slot_fast:"Zone rapide",slot_fast_sub:"Tocca le ubicazioni vicine alla zona di preparazione",slot_near:"Da avvicinare",slot_near_sub:"Prelevati spesso ma lontani",slot_far:"Da allontanare",slot_far_sub:"Prelevati raramente ma in zona rapida",slot_top:"I più prelevati",slot_move:"Sposta",slot_none:"Nessuna ubicazione",slot_ok:"La disposizione è già ottimale",slot_nodata:"Non ci sono ancora abbastanza consegne",slot_picks:"volte"});
 Object.assign(T.sq,{slot_deliv:"dorëzime",slot_title:"Renditja e këshilluar",slot_sub:"Sipas përgatitjeve të 90 ditëve të fundit",slot_fast:"Zonat e shpejta",slot_fast_sub:"Prekni vendet afër zonës së përgatitjes",slot_near:"Për t'u afruar",slot_near_sub:"Përgatiten shpesh por janë larg",slot_far:"Për t'u larguar",slot_far_sub:"Përgatiten rrallë por zënë zonë të shpejtë",slot_top:"Më të përgatiturat",slot_move:"Zhvendos",slot_none:"Pa vend",slot_ok:"Renditja është tashmë optimale",slot_nodata:"Ende jo mjaft dorëzime",slot_picks:"herë"});
 async function slotPicks(){const since=new Date(Date.now()-90*864e5).toISOString();
-  const{data:os,error}=await sb.from("orders").select("id").eq("status","delivered").gte("delivered_at",since).limit(5000);if(error)throw error;
+  const{data:os}=await allRows(()=>sb.from("orders").select("id").eq("status","delivered").gte("delivered_at",since).order("id"));
   const ids=(os||[]).map(o=>o.id),ch=[];for(let i=0;i<ids.length;i+=40)ch.push(ids.slice(i,i+40));
-  const res=await Promise.all(ch.map(c=>sb.from("order_lines").select("product_id,qty_delivered").in("order_id",c).limit(1000)));
-  const picks={};for(const r of res){if(r.error)throw r.error;for(const l of r.data||[])if(num(l.qty_delivered)>0)picks[l.product_id]=(picks[l.product_id]||0)+1}
+  const res=await Promise.all(ch.map(c=>allRows(()=>sb.from("order_lines").select("id,product_id,qty_delivered").in("order_id",c).order("id"))));
+  const picks={};for(const r of res){for(const l of r.data||[])if(num(l.qty_delivered)>0)picks[l.product_id]=(picks[l.product_id]||0)+1}
   return{picks,orders:ids.length}}
 async function slottingSheet(){const body=h("div",{},h("p",{class:"muted"},"…"));const s=sheet("🧭 "+t("slot_title"),body);
   let data;try{data=await slotPicks()}catch(e){body.replaceChildren(h("p",{class:"muted"},errMsg(e)));return}
@@ -701,7 +703,7 @@ async function importProductsXLSX(file){try{const X=await loadXLSX();const wb=X.
           h("button",{class:"btn acc w",onclick:()=>s2.close()},t("close"))))}catch(err){toast(errMsg(err),"bad")}}},"Importer"))));
   }catch(e){toast(errMsg(e),"bad")}}
 async function exportMonthXLSX(month){try{const X=await loadXLSX();if(!Object.keys(S.costs).length)await loadCosts();
-  const[y,m]=month.split("-").map(Number);const next=m===12?`${y+1}-01`:`${y}-${String(m+1).padStart(2,"0")}`;const from=month+"-01T00:00:00"+zurichOffset(),to=next+"-01T00:00:00"+zurichOffset();
+  const[y,m]=month.split("-").map(Number);const next=m===12?`${y+1}-01`:`${y}-${String(m+1).padStart(2,"0")}`;const from=zts(month+"-01"),to=zts(next+"-01");
   const all=async q=>{let out=[];for(let i=0;;i+=1000){const{data,error}=await q().range(i,i+999);if(error)throw error;out=out.concat(data);if(data.length<1000)break}return out};
   const invs=await all(()=>sb.from("invoices").select("*").gte("created_at",from).lt("created_at",to).order("id"));
   const moves=await all(()=>sb.from("stock_moves").select("*").gte("created_at",from).lt("created_at",to).order("id"));
@@ -732,18 +734,30 @@ async function kitchenLosses(from,to){ksb=ksb||supabase.createClient(KITCHEN.url
 let OUT=LS.get("outbox",[]);
 const uuid=()=>(window.crypto&&crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2,12));
 const isNetErr=e=>!navigator.onLine||!!(e&&!e.code&&/fetch|network|load failed|timeout|abort/i.test(e.message||String(e)));
+/* Erreur « métier » définitive (refus explicite du serveur) : la seule qui retire un élément de la file */
+const isBizErr=e=>!!(e&&e.code&&(e.code==="P0001"||/^2[23]/.test(e.code)));
 function enqueue(fn,args,label){OUT.push({id:uuid(),fn,args,label,at:Date.now()});LS.set("outbox",OUT);netBadge()}
 async function call(fn,args,label){if(!navigator.onLine){enqueue(fn,args,label);return{queued:true}}
   try{return await rpc(fn,args)}catch(e){if(isNetErr(e)){enqueue(fn,args,label);return{queued:true}}throw e}}
 let flushing=false;
 async function flush(){if(flushing||!OUT.length||!navigator.onLine)return;flushing=true;let sent=0;
-  try{while(OUT.length){const it=OUT[0];try{const d=await rpcRaw(it.fn,it.args);sent++;if(it.fn==="depot_deliver"&&d&&d.invoice)setTimeout(()=>mailInvoice(d.invoice),500)}catch(e){if(isNetErr(e))break;toast(t("sync_fail")+" · "+(it.label||"")+" : "+errMsg(e),"bad")}OUT.shift();LS.set("outbox",OUT)}}
+  try{while(OUT.length){const it=OUT[0];
+      if(it.args&&it.args.p_pin!==undefined&&/^depot_/.test(it.fn)&&S.depotPin)it.args.p_pin=S.depotPin;
+      try{const d=await rpcRaw(it.fn,it.args);sent++;if(it.fn==="depot_deliver"&&d&&d.invoice)setTimeout(()=>mailInvoice(d.invoice),500)}
+      catch(e){if(e&&e.code==="28000"){pinLost();break}if(!isBizErr(e)){it.tries=(it.tries||0)+1;LS.set("outbox",OUT);break}toast(t("sync_fail")+" · "+(it.label||"")+" : "+errMsg(e),"bad")}
+      OUT.shift();LS.set("outbox",OUT)}}
   finally{flushing=false;netBadge()}
-  if(sent){toast("✓ "+t("synced")+" ("+sent+")","ok");if(S.mode==="depot")await loadBase().catch(()=>{});refresh()}}
+  if(sent){toast("✓ "+t("synced")+" ("+sent+")","ok");if(S.mode==="depot")await loadBase().catch(()=>{});if(S.mode!=="resto")setTimeout(()=>mailPending(),2500);refresh()}}
+/* PIN du dépôt changé pendant l'utilisation : on le redemande */
+let pinAsk=false;
+function pinLost(){if(S.mode!=="depot"||pinAsk)return;pinAsk=true;S.depotPin="";LS.set("dpin","");
+  pinPad(["depot"],pin=>{S.depotPin=pin;LS.set("dpin",pin);pinAsk=false;flush();go(S.view||"d_orders")})}
 let netEl=null;
 function netBadge(){const off=!navigator.onLine,n=OUT.length;if(!off&&!n){if(netEl){netEl.remove();netEl=null}return}
   if(!netEl){netEl=h("div",{class:"net"});document.body.append(netEl)}netEl.className="net"+(off?" off":"");netEl.textContent=(off?"📡 "+t("offline"):"🔄")+(n?" · "+n+" "+t("pending"):"")}
 addEventListener("online",()=>{netBadge();flush()});addEventListener("offline",netBadge);setInterval(flush,20000);
+function zurichOffsetAt(d){try{const s=d.toLocaleString("en-US",{timeZone:"Europe/Zurich",timeZoneName:"shortOffset"});const m=s.match(/GMT([+-])(\d+)/);if(m)return m[1]+String(m[2]).padStart(2,"0")+":00"}catch(e){}return"+01:00"}
+const zts=day=>day+"T00:00:00"+zurichOffsetAt(new Date(day+"T00:00:00+01:00"));
 function zurichOffset(){try{const s=new Date().toLocaleString("en-US",{timeZone:"Europe/Zurich",timeZoneName:"shortOffset"});const m=s.match(/GMT([+-])(\d+)/);if(m)return m[1]+String(m[2]).padStart(2,"0")+":00"}catch(e){}return"+01:00"}
 function openPDF(doc,name){const url=URL.createObjectURL(new File([doc.output("blob")],name,{type:"application/pdf"}));const w=window.open(url,"_blank");if(!w){const a=h("a",{href:url,download:name});document.body.append(a);a.click();a.remove()}}
 function textSheet(title,init,onOk,ph){const inp=h("input",{value:init||"",placeholder:ph||""});
@@ -773,7 +787,7 @@ async function checkReminder(){const cfg=S.reminder||{};if(S.mode!=="resto"||cfg
   const td=zurichToday();if(LS.get("ordered_"+S.resto,"")===td||Date.now()<LS.get("snooze",0))return;
   if(OUT.some(x=>x.fn==="place_order"&&x.args.p_resto===S.resto))return;
   if(autoCoversNext())return;
-  try{const{data,error}=await sb.from("orders").select("id").eq("resto_id",S.resto).gte("created_at",td+"T00:00:00"+zurichOffset()).limit(1);if(!error&&data&&data.length){LS.set("ordered_"+S.resto,td);return}}catch(e){}
+  try{const{data,error}=await sb.from("orders").select("id").eq("resto_id",S.resto).gte("created_at",zts(td)).limit(1);if(!error&&data&&data.length){LS.set("ordered_"+S.resto,td);return}}catch(e){}
   if(!remEl&&S.mode==="resto")showReminder()}
 function showReminder(){const ring=()=>{beep(988,.15);setTimeout(()=>beep(784,.15),230);setTimeout(()=>beep(988,.22),460)};ring();const iv=setInterval(ring,15000);
   const close=()=>{clearInterval(iv);if(remEl)remEl.remove();remEl=null};
@@ -968,7 +982,8 @@ VIEWS.r_cart=function(){
   const names=LS.get("names",[]);const nameInp=h("input",{placeholder:"Ex. Sara",autocomplete:"off",autocapitalize:"words"});
   async function send(btn,who){btn.disabled=true;
     try{const all=Object.entries(S.cart).filter(([id])=>P(id));const lines=all.filter(([id])=>!isOut(P(id))).map(([product_id,qty])=>({product_id,qty}));if(!lines.length)throw new Error(t("out_removed"));if(lines.length<all.length)toast(t("out_removed"));
-      const r=await call("place_order",{p_resto:S.resto,p_lines:lines,p_urgent:urgent,p_note:note.value.trim(),p_by:who,p_ref:uuid()},t("order")+" · "+R(S.resto).name);
+      const ref=LS.get("cartref_"+S.resto,"")||uuid();LS.set("cartref_"+S.resto,ref);
+      const r=await call("place_order",{p_resto:S.resto,p_lines:lines,p_urgent:urgent,p_note:note.value.trim(),p_by:who,p_ref:ref,p_at:new Date().toISOString()},t("order")+" · "+R(S.resto).name);LS.set("cartref_"+S.resto,"");
       LS.set("names",[who,...names.filter(x=>x.toLowerCase()!==who.toLowerCase())].slice(0,8));LS.set("ordered_"+S.resto,zurichToday());
       S.cart={};LS.set("cart",{});buzz(true);go("r_sent",r&&r.queued?{queued:true,delivery_date:nextDelivery()}:r)}catch(err){btn.disabled=false;toast(errMsg(err),"bad")}}
   const sw=h("div",{class:"sw"});
@@ -980,7 +995,7 @@ VIEWS.r_cart=function(){
     S.mode!=="resto"&&cartTotal()>0?h("div",{class:"row",style:"margin:6px 4px 14px"},h("span",{class:"muted b"},t("total_ht")),h("span",{class:"sp"}),h("span",{class:"price",style:"font-size:20px"},chf(cartTotal()))):null,
     h("div",{class:"fld"},h("label",{},t("your_name")),nameInp,names.length?h("div",{class:"row",style:"gap:6px;flex-wrap:wrap;margin-top:4px"},names.map(nm=>h("button",{class:"pill",style:"height:36px;padding:0 14px;font-size:14px",onclick:()=>{nameInp.value=nm}},nm))):null),
     h("button",{class:"btn acc w",style:"height:58px;font-size:17px",onclick:e=>{const who=nameInp.value.trim();if(!who){toast(t("need_name"),"bad");nameInp.focus();return}
-      const btn=e.currentTarget;btn.disabled=true;dupCheck(()=>{const an=anomalies();if(an.length)return anomalySheet(an,()=>send(btn,who));send(btn,who)}).finally(()=>{if(document.body.contains(btn)&&!document.querySelector(".ok-anim"))btn.disabled=false})}},t("send_order")+" · "+ids.length+" "+t("items"))
+      const btn=e.currentTarget;btn.disabled=true;dupCheck(()=>{const an=anomalies();if(an.length)return anomalySheet(an,()=>send(btn,who));return send(btn,who)}).finally(()=>{if(document.body.contains(btn)&&!document.querySelector(".ok-anim"))btn.disabled=false})}},t("send_order")+" · "+ids.length+" "+t("items"))
   ]:[h("div",{class:"empty"},h("div",{class:"e"},"🛒"),t("empty_cart"))];
   mount(h("div",{class:"back"},h("button",{class:"icbtn",onclick:()=>go("r_order")},ic("backc")),h("h1",{},t("cart"))),body);
 };
@@ -1019,7 +1034,7 @@ function depotNav(active,badge){return navBar([["d_orders","list",t("orders"),ba
 let pendingCount=0;
 VIEWS.d_orders=async function(){
   const td=zurichToday();
-  const[a,b]=await Promise.all([sb.from("orders").select("*,order_lines(*)").in("status",["new","preparing"]),sb.from("orders").select("*,order_lines(id,qty_ordered,qty_delivered)").eq("status","delivered").gte("delivered_at",td+"T00:00:00"+zurichOffset()).order("delivered_at",{ascending:false})]);
+  const[a,b]=await Promise.all([sb.from("orders").select("*,order_lines(*)").in("status",["new","preparing"]),sb.from("orders").select("*,order_lines(id,qty_ordered,qty_delivered)").eq("status","delivered").gte("delivered_at",zts(td)).order("delivered_at",{ascending:false})]);
   if(S.view!=="d_orders")return;
   if(a.error)a.data=LS.get("dopen",[]);else LS.set("dopen",a.data);
   const queuedDel=new Set(OUT.filter(x=>x.fn==="depot_deliver").map(x=>x.args.p_order));
@@ -1052,7 +1067,7 @@ const addrOf=r=>[r.address,[r.zip,r.city].filter(Boolean).join(" ")].filter(Bool
 const mapsDir=(dest,origin,way)=>"https://www.google.com/maps/dir/?api=1&travelmode=driving&destination="+encodeURIComponent(dest)+(origin?"&origin="+encodeURIComponent(origin):"")+(way&&way.length?"&waypoints="+encodeURIComponent(way.join("|")):"");
 VIEWS.d_driver=async function(){
   const td=zurichToday();let list=[];
-  try{const{data}=await sb.from("orders").select("*,order_lines(id)").eq("status","delivered").gte("delivered_at",addDays(td,-1)+"T00:00:00"+zurichOffset()).order("delivered_at");list=(data||[]).filter(o=>!o.arrived_at||o.arrived_at.slice(0,10)>=td||(o.delivered_at||"").slice(0,10)===td)}catch(e){}
+  try{const{data}=await sb.from("orders").select("*,order_lines(id)").eq("status","delivered").gte("delivered_at",zts(addDays(td,-1))).order("delivered_at");list=(data||[]).filter(o=>!o.arrived_at||o.arrived_at.slice(0,10)>=td||(o.delivered_at||"").slice(0,10)===td)}catch(e){}
   if(S.view!=="d_driver")return;
   list.sort((a,b)=>tourIdx(a.resto_id)-tourIdx(b.resto_id));
   const todo=list.filter(o=>!o.arrived_at);const co=S.company||{};const depotAddr=addrOf(co);
@@ -1294,11 +1309,11 @@ VIEWS.a_stats=needAdmin(async function(){
   try{await loadCosts()}catch(e){return}
   await loadLots();
   const[from,to]=periodRange(S.period);
-  let qi=sb.from("invoices").select("*").gte("created_at",from+"T00:00:00");if(to)qi=qi.lt("created_at",to+"T00:00:00");
-  let ql=sb.from("order_lines").select("product_id,name,qty_ordered,qty_delivered,orders!inner(created_at,resto_id,status)").gte("orders.created_at",from+"T00:00:00");if(to)ql=ql.lt("orders.created_at",to+"T00:00:00");
-  let qm=sb.from("stock_moves").select("*").eq("kind","loss").gte("created_at",from+"T00:00:00");if(to)qm=qm.lt("created_at",to+"T00:00:00");
+  const qi=()=>{let q=sb.from("invoices").select("*").gte("created_at",zts(from));if(to)q=q.lt("created_at",zts(to));return q.order("id")};
+  const ql=()=>{let q=sb.from("order_lines").select("id,product_id,name,qty_ordered,qty_delivered,orders!inner(created_at,resto_id,status)").gte("orders.created_at",zts(from));if(to)q=q.lt("orders.created_at",zts(to));return q.order("id")};
+  const qm=()=>{let q=sb.from("stock_moves").select("*").eq("kind","loss").gte("created_at",zts(from));if(to)q=q.lt("created_at",zts(to));return q.order("id")};
   const yStart=zurichToday().slice(0,4)-1+zurichToday().slice(4,7)+"-01";
-  const[inv,ol,ls,yr,sv]=await Promise.all([qi,ql,qm,sb.from("invoices").select("created_at,total_ht,resto_id").gte("created_at",yStart+"T00:00:00"),rpc("admin_stock_value",{p_pin:S.adminPin})]);
+  const[inv,ol,ls,yr,sv]=await Promise.all([allRows(qi),allRows(ql),allRows(qm),allRows(()=>sb.from("invoices").select("id,created_at,total_ht,resto_id").gte("created_at",zts(yStart)).order("id")),rpc("admin_stock_value",{p_pin:S.adminPin})]);
   if(S.view!=="a_stats")return;
   const invs=inv.data||[];const ca=invs.reduce((a,i)=>a+num(i.total_ht),0);const nOrders=invs.filter(i=>i.kind==="invoice").length;
   let cogs=0;const byProd={};for(const i of invs)for(const l of i.lines||[]){const sign=i.kind==="credit"?-1:1;const v=sign*num(l.qty)*num(l.price);cogs+=sign*num(l.qty)*(S.costs[l.product_id]||0);(byProd[l.product_id]=byProd[l.product_id]||{name:l.name,v:0,q:0}).v+=v;byProd[l.product_id].q+=sign*num(l.qty)}
@@ -1312,7 +1327,7 @@ VIEWS.a_stats=needAdmin(async function(){
   const maxM=Math.max(...Object.values(byMonth),1);
   const kBody=h("div",{class:"muted small"},"Chargement des données Kitchen…");
   const kCard=h("div",{class:"card",style:"grid-column:1/-1"},h("div",{class:"row",style:"margin-bottom:10px;flex-wrap:wrap"},h("div",{class:"b"},"🍗 Achats à la centrale vs pertes en cuisine"),h("span",{class:"sp"}),h("span",{class:"pill"},"Kitchen Chic Chicken")),kBody);
-  kitchenLosses(from+"T00:00:00"+zurichOffset(),to?to+"T00:00:00"+zurichOffset():null).then(({byResto,items})=>{
+  kitchenLosses(zts(from),to?zts(to):null).then(({byResto,items})=>{
     const ids=[...new Set([...S.restos.map(r=>r.id)])];
     const rows=ids.map(id=>{const k=byResto[id]||{cooked:0,disc:0,chicken:0,sides:0};const buy=byResto2[id]||0;const loss=k.chicken+k.sides;return{id,buy,loss,k,pct:buy?loss/buy*100:null,rate:k.cooked?k.disc/k.cooked*100:null}});
     const T=rows.reduce((a,r)=>({buy:a.buy+r.buy,loss:a.loss+r.loss,cooked:a.cooked+r.k.cooked,disc:a.disc+r.k.disc}),{buy:0,loss:0,cooked:0,disc:0});
@@ -1435,7 +1450,7 @@ function resetSheet(){
 VIEWS.a_invoices=needAdmin(async function(){
   S.invResto=S.invResto||"all";S.invMonth=S.invMonth||zurichToday().slice(0,7);
   const[y,m]=S.invMonth.split("-").map(Number);const next=m===12?`${y+1}-01`:`${y}-${String(m+1).padStart(2,"0")}`;
-  let q=sb.from("invoices").select("*").gte("created_at",S.invMonth+"-01T00:00:00").lt("created_at",next+"-01T00:00:00").order("id",{ascending:false});if(S.invResto!=="all")q=q.eq("resto_id",S.invResto);
+  let q=sb.from("invoices").select("*").gte("created_at",zts(S.invMonth+"-01")).lt("created_at",zts(next+"-01")).order("id",{ascending:false});if(S.invResto!=="all")q=q.eq("resto_id",S.invResto);
   const{data}=await q;if(S.view!=="a_invoices")return;
   const tot=(data||[]).reduce((a,i)=>a+num(i.total_ttc),0);
   const st={};try{const ids=(data||[]).filter(i=>i.email_req).map(i=>i.id);if(ids.length)for(const r of await rpc("invoice_mail_status",{p_pin:S.adminPin,p_ids:ids}))st[r.id]=r}catch(e){}
@@ -1530,7 +1545,7 @@ VIEWS.a_settings=needAdmin(function(){
   mount(h("h1",{},"Réglages"),
     h("div",{class:"sec"},h("h2",{},"Chic Distribution (factures)")),
     h("div",{class:"card"},fld("name","Raison sociale"),fld("address","Rue et numéro"),h("div",{class:"f2"},fld("zip","NPA"),fld("city","Ville")),h("div",{class:"f2"},fld("vat_no","N° TVA (CHE-…)"),fld("iban","IBAN (QR-facture)")),h("div",{class:"f2"},fld("email","E-mail"),fld("phone","Téléphone")),fld("payment_days","Délai de paiement (jours)",{type:"number"}),
-      h("button",{class:"btn acc",onclick:async()=>{const v={...c};for(const[k,i]of Object.entries(f))v[k]=k==="payment_days"?Number(i.value)||30:i.value.trim();v.iban=v.iban.replace(/\s/g,"").toUpperCase();try{await rpc("admin_save_settings",{p_pin:S.adminPin,p_key:"company",p_value:v});S.company=v;toast("✓ "+t("saved"),"ok")}catch(e){toast(errMsg(e),"bad")}}},t("save"))),
+      h("button",{class:"btn acc",onclick:async()=>{const v={...c};for(const[k,i]of Object.entries(f))v[k]=k==="payment_days"?Number(i.value)||30:i.value.trim();v.iban=v.iban.replace(/\s/g,"").toUpperCase();if(v.iban&&!ibanOk(v.iban)){toast("IBAN invalide : vérifiez le numéro","bad");return}try{await rpc("admin_save_settings",{p_pin:S.adminPin,p_key:"company",p_value:v});S.company=v;toast("✓ "+t("saved"),"ok")}catch(e){toast(errMsg(e),"bad")}}},t("save"))),
     h("div",{class:"sec"},h("h2",{},"Restaurants")),restoForms,
     h("div",{class:"sec"},h("h2",{},t("announce"))),h("div",{class:"card"},S.announce&&S.announce.text?announceEl():h("p",{class:"muted small",style:"margin:0 0 10px"},"Aucun message affiché sur les iPad des restos."),h("button",{class:"btn light",onclick:announceSheet},"📨 "+(S.announce&&S.announce.text?t("edit"):t("publish")))),
     h("div",{class:"sec"},h("h2",{},"Mode test")),testCard,
@@ -1558,13 +1573,18 @@ function qrModules(text){qrcode.stringToBytes=qrcode.stringToBytesFuncs["UTF-8"]
 function drawQR(doc,text,x,y,size){const q=qrModules(text);const n=q.getModuleCount();const s=size/n;doc.setFillColor(0,0,0);
   for(let r=0;r<n;r++){let c=0;while(c<n){if(q.isDark(r,c)){let e=c;while(e+1<n&&q.isDark(r,e+1))e++;doc.rect(x+c*s,y+r*s,(e-c+1)*s+0.01,s+0.01,"F");c=e+1}else c++}}}
 function splitAddr(a){const m=String(a||"").trim().match(/^(.*?)[\s,]+(\d+[a-zA-Z]?)$/);return m?[m[1],m[2]]:[String(a||"").trim(),""]}
-function swissPayload(co,amount,debtor,msg){
+const isQRIban=iban=>{const x=(iban||"").replace(/\s/g,"").toUpperCase();if(!/^(CH|LI)\d{19}$/.test(x))return false;const iid=+x.slice(4,9);return iid>=30000&&iid<=31999};
+function ibanOk(iban){const x=(iban||"").replace(/\s/g,"").toUpperCase();if(!/^(CH|LI)\d{2}[0-9A-Z]{17}$/.test(x))return false;const r=(x.slice(4)+x.slice(0,4)).replace(/[A-Z]/g,c=>c.charCodeAt(0)-55);let m=0;for(const d of r)m=(m*10+ +d)%97;return m===1}
+function mod10r(s){const T=[0,9,4,6,8,2,7,1,3,5];let c=0;for(const d of s)c=T[(c+ +d)%10];return(10-c)%10}
+function qrrRef(seed){const d=String(seed||"").replace(/\D/g,"").slice(-26).padStart(26,"0");return d+mod10r(d)}
+const fmtRef=r=>r.replace(/\D/g,"").replace(/^(\d{2})(\d{5})(\d{5})(\d{5})(\d{5})(\d{5})$/,"$1 $2 $3 $4 $5 $6");
+function swissPayload(co,amount,debtor,msg,ref){
   const[cs,cn]=splitAddr(co.address);const iban=(co.iban||"").replace(/\s/g,"");
   const L=["SPC","0200","1",iban,"S",co.name||"",cs,cn,co.zip||"",co.city||"",co.country||"CH","","","","","","","",amount>0?amount.toFixed(2):"","CHF"];
   if(debtor&&debtor.name&&debtor.zip&&debtor.city){const[ds,dn]=splitAddr(debtor.address);L.push("S",debtor.name,ds,dn,debtor.zip,debtor.city,"CH")}else L.push("","","","","","","");
-  L.push("NON","",msg||"","EPD");return L.map(x=>String(x).slice(0,140)).join("\r\n");
+  if(ref)L.push("QRR",ref,msg||"","EPD");else L.push("NON","",msg||"","EPD");return L.map(x=>String(x).slice(0,140)).join("\r\n");
 }
-function drawSwissQR(doc,co,amount,debtor,msg){
+function drawSwissQR(doc,co,amount,debtor,msg,seed){const ref=isQRIban(co.iban)?qrrRef(seed||msg):"";
   const y0=192;doc.setDrawColor(0);doc.setLineWidth(.2);doc.setLineDashPattern([1.2,1],0);doc.line(0,y0,210,y0);doc.line(62,y0,62,297);doc.setLineDashPattern([],0);
   doc.setFont("helvetica","normal");doc.setFontSize(7);doc.text("À couper",105,y0-2,{align:"center"});
   const[cs,cn]=splitAddr(co.address);const credLines=[(co.iban||"").replace(/\s/g,"").replace(/(.{4})/g,"$1 ").trim(),co.name,[cs,cn].filter(Boolean).join(" "),[co.zip,co.city].filter(Boolean).join(" ")].map(pdfTxt);
@@ -1574,15 +1594,17 @@ function drawSwissQR(doc,co,amount,debtor,msg){
   let x=5,y=y0+10;doc.setFont("helvetica","bold");doc.setFontSize(11);doc.text("Récépissé",x,y);y+=7;
   const block=(title,lines,ts,vs,lh,xx,yy)=>{doc.setFont("helvetica","bold");doc.setFontSize(ts);doc.text(title,xx,yy);yy+=lh;doc.setFont("helvetica","normal");doc.setFontSize(vs);for(const l of lines){doc.text(l,xx,yy);yy+=lh}return yy+lh*.6};
   y=block("Compte / Payable à",credLines,6,8,3.5,x,y);
+  if(ref)y=block("Référence",[fmtRef(ref)],6,8,3.5,x,y);
   if(debLines.length)y=block("Payable par",debLines,6,8,3.5,x,y);else{doc.setFont("helvetica","bold");doc.setFontSize(6);doc.text("Payable par (nom/adresse)",x,y);doc.rect(x,y+1,52,20);y+=25}
   y=y0+68;doc.setFont("helvetica","bold");doc.setFontSize(6);doc.text("Monnaie",x,y);doc.text("Montant",x+15,y);doc.setFont("helvetica","normal");doc.setFontSize(8);doc.text("CHF",x,y+4.5);doc.text(amt,x+15,y+4.5);
   doc.setFont("helvetica","bold");doc.setFontSize(6);doc.text("Point de dépôt",57,y0+82,{align:"right"});
   // Section paiement
   x=67;doc.setFont("helvetica","bold");doc.setFontSize(11);doc.text("Section paiement",x,y0+10);
-  const qy=y0+17;drawQR(doc,swissPayload(co,amount,debtor,msg),x,qy,46);
+  const qy=y0+17;drawQR(doc,swissPayload(co,amount,debtor,msg,ref),x,qy,46);
   doc.setFillColor(255,255,255);doc.rect(x+19.5,qy+19.5,7,7,"F");doc.setFillColor(0,0,0);doc.rect(x+20,qy+20,6,6,"F");doc.setFillColor(255,255,255);doc.rect(x+22.4,qy+21.2,1.2,3.6,"F");doc.rect(x+21.2,qy+22.4,3.6,1.2,"F");
   y=y0+68;doc.setFont("helvetica","bold");doc.setFontSize(8);doc.text("Monnaie",x,y);doc.text("Montant",x+15,y);doc.setFont("helvetica","normal");doc.setFontSize(10);doc.text("CHF",x,y+5);doc.text(amt,x+15,y+5);
   x=118;y=y0+10;y=block("Compte / Payable à",credLines,8,10,4.2,x,y);
+  if(ref)y=block("Référence",[fmtRef(ref)],8,10,4.2,x,y);
   if(msg)y=block("Informations supplémentaires",[pdfTxt(msg)],8,10,4.2,x,y);
   if(debLines.length)block("Payable par",debLines,8,10,4.2,x,y);else{doc.setFont("helvetica","bold");doc.setFontSize(8);doc.text("Payable par (nom/adresse)",x,y);doc.rect(x,y+1.5,65,25)}
 }
@@ -1631,7 +1653,7 @@ async function invoicePDF(id){
   doc.setFont("helvetica","normal");doc.setFontSize(8.5);doc.setTextColor(...MU);
   const foot=credit?"Ce montant sera déduit de votre prochain paiement.":"Merci de régler cette facture dans un délai de "+num(co.payment_days||30)+" jours avec la QR-facture ci-dessous.";
   doc.text(foot,15,Math.max(y,y)+4);doc.setTextColor(...INK);
-  if(!credit&&num(inv.total_ttc)>0){if(y>178){doc.addPage()}drawSwissQR(doc,co,Math.round(num(inv.total_ttc)*100)/100,rs,"Facture "+inv.number)}
+  if(!credit&&num(inv.total_ttc)>0){if(y>178){doc.addPage()}drawSwissQR(doc,co,Math.round(num(inv.total_ttc)*100)/100,rs,"Facture "+inv.number,"1"+inv.number)}
   const pages=doc.getNumberOfPages();for(let i=1;i<=pages;i++){doc.setPage(i);doc.setFontSize(7);doc.setTextColor(...MU);doc.text(pdfTxt(co.name)+" · "+inv.number+" · page "+i+"/"+pages,105,i===pages&&!credit&&num(inv.total_ttc)>0?186:290,{align:"center"})}
   return{doc,name:inv.number+"-"+pdfTxt(rs.name).replace(/\s+/g,"-")+".pdf"};
 }
@@ -1703,7 +1725,7 @@ async function deliveryNotePDF(orderId){
   return{doc,name:"BL-"+o.number+"-"+pdfTxt(rs.name).replace(/\s+/g,"-")+".pdf"}}
 async function openDeliveryNote(id){try{const{doc,name}=await deliveryNotePDF(id);openPDF(doc,name)}catch(e){toast(errMsg(e),"bad")}}
 async function monthInvoices(month,resto){const[y,m]=month.split("-").map(Number);const next=m===12?`${y+1}-01`:`${y}-${String(m+1).padStart(2,"0")}`;
-  let q=sb.from("invoices").select("*").gte("created_at",month+"-01T00:00:00"+zurichOffset()).lt("created_at",next+"-01T00:00:00"+zurichOffset()).order("id");if(resto)q=q.eq("resto_id",resto);const{data,error}=await q;if(error)throw error;return data||[]}
+  return allRows(()=>{let q=sb.from("invoices").select("*").gte("created_at",zts(month+"-01")).lt("created_at",zts(next+"-01")).order("id");if(resto)q=q.eq("resto_id",resto);return q}).then(r=>r.data)}
 function statementPDF(month,resto,invs){const co=S.company,rs=R(resto);const{jsPDF}=window.jspdf;const doc=new jsPDF({unit:"mm",format:"a4"});const INK=[21,24,28],MU=[103,112,128];
   const lbl=cap(dfmt(month+"-15",{month:"long",year:"numeric"}));const df=x=>new Intl.DateTimeFormat("fr-CH",{day:"2-digit",month:"2-digit",year:"numeric"}).format(new Date(x));
   doc.setFillColor(227,93,11);doc.roundedRect(15,14,12,12,3,3,"F");doc.setTextColor(255,255,255);doc.setFont("helvetica","bold");doc.setFontSize(9);doc.text("CD",21,21.6,{align:"center"});
@@ -1724,7 +1746,7 @@ function statementPDF(month,resto,invs){const co=S.company,rs=R(resto);const{jsP
   y+=4;doc.setFontSize(9.5);[["Total HT",ht],["TVA",tva]].forEach(([k,v])=>{doc.text(k,140,y);doc.text("CHF "+pmoney(v),192,y,{align:"right"});y+=5.5});
   doc.setFillColor(227,93,11);doc.roundedRect(135,y-4,60,10,2.5,2.5,"F");doc.setTextColor(255,255,255);doc.setFont("helvetica","bold");doc.setFontSize(11.5);doc.text("Total à payer",140,y+2.6);doc.text("CHF "+pmoney(ttc),192,y+2.6,{align:"right"});
   doc.setTextColor(...MU);doc.setFont("helvetica","normal");doc.setFontSize(8.5);doc.text(invs.length+" document(s). Ce relevé peut être payé en une fois avec la QR-facture ci-dessous ; il remplace alors le paiement facture par facture.",15,y+14,{maxWidth:115});
-  if(ttc>0){if(y>170)doc.addPage();drawSwissQR(doc,co,Math.round(ttc*100)/100,rs,"Relevé "+month.slice(5,7)+"."+month.slice(0,4)+" "+rs.name)}
+  if(ttc>0){if(y>170)doc.addPage();drawSwissQR(doc,co,Math.round(ttc*100)/100,rs,"Relevé "+month.slice(5,7)+"."+month.slice(0,4)+" "+rs.name,"2"+month+String(rs.id))}
   return{doc,name:"Releve-"+month+"-"+pdfTxt(rs.name).replace(/\s+/g,"-")+".pdf",ttc}}
 async function statementsSheet(month){const box=h("div",{class:"card",style:"padding:4px 14px;margin-bottom:12px"},"…");
   const s=sheet("Relevés de "+dfmt(month+"-15",{month:"long",year:"numeric"}),h("div",{},h("p",{class:"muted small",style:"margin:-6px 0 12px"},"Un relevé par resto : toutes les factures et avoirs du mois, avec une seule QR-facture pour payer le total. L'envoi part au resto, à la compta et aux admins (en mode test : seulement aux admins)."),box,
