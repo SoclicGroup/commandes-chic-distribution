@@ -769,7 +769,7 @@ VIEWS.r_auto=function(){
 VIEWS.r_count=function(){
   const pars=myPars(),C=S.counts;const items=S.products.filter(p=>p.active&&pars[p.id]>0);
   const need=id=>C[id]==null?null:Math.max(0,Math.round((pars[id]-C[id])*100)/100);
-  const cnt=h("span",{},"0");const btn=h("button",{class:"btn acc",onclick:()=>{let n=0;for(const p of items){const q=need(p.id);if(q>0){setQty(p.id,q);n++}}S.counts={};toast("✓ "+plural(n,"products_count"),"ok");go("r_cart")}},"🛒 "+t("add_cart")+" (",cnt,")");
+  const cnt=h("span",{},"0");const btn=h("button",{class:"btn acc",onclick:()=>{let n=0;for(const p of items){const q=need(p.id);if(q>0){setQty(p.id,q);n++}}S.counts={};toast("✓ "+plural(n,"products_count"),"ok");go("r_cart")}},"🛒 "+t("add_cart"),h("span",{},"(",cnt,")"));
   const upd=()=>{const n=items.filter(p=>need(p.id)>0).length;cnt.textContent=n;btn.disabled=!n};
   const byCat={};for(const p of items)(byCat[p.cat]=byCat[p.cat]||[]).push(p);
   const list=S.cats.filter(c=>byCat[c.id]).map(c=>h("div",{class:"card",style:"padding:6px 14px"},h("div",{class:"b",style:"padding:10px 0 4px"},c.label),byCat[c.id].map(p=>{
@@ -1000,7 +1000,7 @@ VIEWS.d_inv=function(){
     h("div",{style:"height:70px"}),
     h("div",{class:"sticky",style:"bottom:calc(env(safe-area-inset-bottom) + 92px)"},h("button",{class:"btn acc",onclick:async e=>{const counts=Object.entries(C).map(([product_id,qty])=>({product_id,qty}));if(!counts.length)return;e.target.disabled=true;
       try{const n=await call("depot_inventory",{p_pin:S.depotPin||S.adminPin,p_counts:counts,p_by:S.who},t("inventory"));S.invCounts={};
-        if(n&&n.queued){for(const c of counts){const p=P(c.product_id);if(p)p.stock=c.qty}toast(t("queued"),"ok")}else{await loadBase();toast("✓ "+n+" "+t("changed"),"ok")}refresh()}catch(err){e.target.disabled=false;toast(errMsg(err),"bad")}}},t("validate_inv")," (",cnt,")")),
+        if(n&&n.queued){for(const c of counts){const p=P(c.product_id);if(p)p.stock=c.qty}toast(t("queued"),"ok")}else{await loadBase();toast("✓ "+n+" "+t("changed"),"ok")}refresh()}catch(err){e.target.disabled=false;toast(errMsg(err),"bad")}}},t("validate_inv"),h("span",{},"(",cnt,")"))),
     depotNav("d_inv",pendingCount||null));
 };
 
