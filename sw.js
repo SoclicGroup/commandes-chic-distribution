@@ -1,5 +1,5 @@
 // Service worker : ouverture instantanée (cache de l'app) + notifications.
-const V = "cd-v11";
+const V = "cd-v12";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon.svg", "icon-192.png", "apple-touch-icon.png"];
 const CDN = /(cdn\.jsdelivr\.net|unpkg\.com|cdnjs\.cloudflare\.com|fonts\.googleapis\.com|fonts\.gstatic\.com)$/;
 

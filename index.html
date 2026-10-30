@@ -736,7 +736,7 @@ const uuid=()=>(window.crypto&&crypto.randomUUID?crypto.randomUUID():Date.now().
 const isNetErr=e=>!navigator.onLine||!!(e&&!e.code&&/fetch|network|load failed|timeout|abort/i.test(e.message||String(e)));
 /* Erreur « métier » définitive (refus explicite du serveur) : la seule qui retire un élément de la file */
 const isBizErr=e=>!!(e&&e.code&&(e.code==="P0001"||/^2[23]/.test(e.code)));
-function enqueue(fn,args,label){OUT.push({id:uuid(),fn,args,label,at:Date.now()});LS.set("outbox",OUT);netBadge()}
+function enqueue(fn,args,label){if((fn==="depot_inventory"||fn==="place_order")&&args&&!args.p_at)args={...args,p_at:new Date().toISOString()};OUT.push({id:uuid(),fn,args,label,at:Date.now()});LS.set("outbox",OUT);netBadge()}
 async function call(fn,args,label){if(!navigator.onLine){enqueue(fn,args,label);return{queued:true}}
   try{return await rpc(fn,args)}catch(e){if(isNetErr(e)){enqueue(fn,args,label);return{queued:true}}throw e}}
 let flushing=false;
@@ -744,14 +744,16 @@ async function flush(){if(flushing||!OUT.length||!navigator.onLine)return;flushi
   try{while(OUT.length){const it=OUT[0];
       if(it.args&&it.args.p_pin!==undefined&&/^depot_/.test(it.fn)&&S.depotPin)it.args.p_pin=S.depotPin;
       try{const d=await rpcRaw(it.fn,it.args);sent++;if(it.fn==="depot_deliver"&&d&&d.invoice)setTimeout(()=>mailInvoice(d.invoice),500)}
-      catch(e){if(e&&e.code==="28000"){pinLost();break}if(!isBizErr(e)){it.tries=(it.tries||0)+1;LS.set("outbox",OUT);break}toast(t("sync_fail")+" · "+(it.label||"")+" : "+errMsg(e),"bad")}
+      catch(e){if(e&&e.code==="28000"){pinLost();break}
+        if(!isBizErr(e)){it.tries=(it.tries||0)+1;if(it.tries%10===0&&OUT.length>1){OUT.push(OUT.shift());toast(t("sync_fail")+" · "+(it.label||"")+" : "+errMsg(e),"bad")}LS.set("outbox",OUT);break}
+        if(!(it.fn==="depot_deliver"&&/déjà livrée/.test(errMsg(e))))toast(t("sync_fail")+" · "+(it.label||"")+" : "+errMsg(e),"bad")}
       OUT.shift();LS.set("outbox",OUT)}}
   finally{flushing=false;netBadge()}
   if(sent){toast("✓ "+t("synced")+" ("+sent+")","ok");if(S.mode==="depot")await loadBase().catch(()=>{});if(S.mode!=="resto")setTimeout(()=>mailPending(),2500);refresh()}}
 /* PIN du dépôt changé pendant l'utilisation : on le redemande */
 let pinAsk=false;
 function pinLost(){if(S.mode!=="depot"||pinAsk)return;pinAsk=true;S.depotPin="";LS.set("dpin","");
-  pinPad(["depot"],pin=>{S.depotPin=pin;LS.set("dpin",pin);pinAsk=false;flush();go(S.view||"d_orders")})}
+  pinPad(["depot"],pin=>{S.depotPin=pin;LS.set("dpin",pin);pinAsk=false;flush();go(S.view||"d_orders")},null,{locked:true,onClose:()=>{setTimeout(()=>{pinAsk=false},0)}})}
 let netEl=null;
 function netBadge(){const off=!navigator.onLine,n=OUT.length;if(!off&&!n){if(netEl){netEl.remove();netEl=null}return}
   if(!netEl){netEl=h("div",{class:"net"});document.body.append(netEl)}netEl.className="net"+(off?" off":"");netEl.textContent=(off?"📡 "+t("offline"):"🔄")+(n?" · "+n+" "+t("pending"):"")}
@@ -830,13 +832,13 @@ function settingsSheet(){
 function resetMode(){S.mode=null;LS.del("mode");go("setup")}
 
 /* ---------- Setup ---------- */
-function pinPad(roles,onOk,title){
+function pinPad(roles,onOk,title,opts){
   let code="";const dots=h("div",{class:"pin"});const draw=()=>dots.replaceChildren(...[0,1,2,3].map(i=>h("i",{class:i<code.length?"on":""})));draw();
   let busy=false;
   const press=async k=>{if(busy)return;if(k==="del"){code=code.slice(0,-1);draw();return}if(code.length>=4)return;code+=k;draw();if(code.length===4){busy=true;
     for(const r of roles){try{if(await rpc("check_pin",{p_role:r,p_pin:code})){s.close();onOk(code,r);return}}catch(e){}}
     busy=false;buzz(false);dots.animate([{transform:"translateX(-8px)"},{transform:"translateX(8px)"},{transform:"none"}],{duration:240});toast(t("wrong_pin"),"bad");code="";draw()}};
-  const s=sheet(title||t("pin"),h("div",{style:"text-align:center"},dots,h("div",{class:"pad"},["1","2","3","4","5","6","7","8","9","","0","del"].map(k=>k?h("button",{onclick:()=>press(k)},k==="del"?"⌫":k):h("span")))));
+  const s=sheet(title||t("pin"),h("div",{style:"text-align:center"},dots,h("div",{class:"pad"},["1","2","3","4","5","6","7","8","9","","0","del"].map(k=>k?h("button",{onclick:()=>press(k)},k==="del"?"⌫":k):h("span")))),opts||{});
 }
 const VIEWS={};S.stepMode=LS.get("stepMode",false);
 VIEWS.setup=function(step){
@@ -1291,7 +1293,7 @@ VIEWS.d_inv=function(){
     h("div",{class:"search"},h("span",{class:"sic",html:ICON.search}),inp),box,
     h("div",{style:"height:70px"}),
     h("div",{class:"sticky",style:"bottom:calc(env(safe-area-inset-bottom) + 92px)"},h("button",{class:"btn acc",onclick:async e=>{const counts=Object.entries(C).map(([product_id,qty])=>({product_id,qty}));if(!counts.length)return;e.target.disabled=true;
-      try{const n=await call("depot_inventory",{p_pin:S.depotPin||S.adminPin,p_counts:counts,p_by:S.who},t("inventory"));S.invCounts={};
+      try{const n=await call("depot_inventory",{p_pin:S.depotPin||S.adminPin,p_counts:counts,p_by:S.who,p_at:new Date().toISOString()},t("inventory"));S.invCounts={};
         if(n&&n.queued){for(const c of counts){const p=P(c.product_id);if(p)p.stock=c.qty}toast(t("queued"),"ok")}else{await loadBase();toast("✓ "+n+" "+t("changed"),"ok")}refresh()}catch(err){e.target.disabled=false;toast(errMsg(err),"bad")}}},t("validate_inv"),h("span",{},"(",cnt,")"))),
     depotNav("d_inv",pendingCount||null));
 };
@@ -1322,7 +1324,7 @@ VIEWS.a_stats=needAdmin(async function(){
   const rupt={};for(const l of lines){const m=num(l.qty_ordered)-num(l.qty_delivered);if(m>0)(rupt[l.product_id]=rupt[l.product_id]||{name:l.name,q:0}).q+=m}
   const loss={};let lossV=0;for(const m of ls.data||[]){const p=P(m.product_id)||{name:m.product_id};const v=-num(m.qty)*(S.costs[m.product_id]||0);lossV+=v;(loss[m.product_id]=loss[m.product_id]||{name:p.name,v:0,q:0}).v+=v;loss[m.product_id].q+=-num(m.qty)}
   const months=[];{let d=new Date(yStart+"T12:00:00");for(let i=0;i<12;i++){d=new Date(d.getFullYear(),d.getMonth()+1,1,12);months.push(d.toISOString().slice(0,7))}}
-  const byMonth=Object.fromEntries(months.map(m=>[m,0]));for(const i of yr.data||[]){const k=i.created_at.slice(0,7);if(k in byMonth)byMonth[k]+=num(i.total_ht)}
+  const byMonth=Object.fromEntries(months.map(m=>[m,0]));const zMonth=new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Zurich",year:"numeric",month:"2-digit"});for(const i of yr.data||[]){const k=zMonth.format(new Date(i.created_at)).slice(0,7);if(k in byMonth)byMonth[k]+=num(i.total_ht)}
   const bars=(obj,fmtv,lab)=>{const arr=Object.entries(obj).sort((a,b)=>b[1].v-a[1].v).slice(0,10);const max=Math.max(...arr.map(x=>Math.abs(x[1].v)),1);return arr.length?h("div",{class:"bars"},arr.map(([k,o])=>h("div",{class:"bar"},h("span",{class:"lb"},lab?lab(k,o):o.name),h("div",{class:"tr"},h("div",{class:"fl",style:`width:${Math.abs(o.v)/max*100}%`})),h("b",{},fmtv(o))))):h("div",{class:"muted small"},"—")};
   const maxM=Math.max(...Object.values(byMonth),1);
   const kBody=h("div",{class:"muted small"},"Chargement des données Kitchen…");
