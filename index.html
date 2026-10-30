@@ -863,7 +863,7 @@ async function loadSuggestions(){
   LS.set("sugg_"+S.resto,{sugg:S.sugg,usual:S.usual,last:S.last});
 }
 async function dupCheck(next){const d=nextDelivery();let found=[];
-  try{const{data,error}=await sb.from("orders").select("id,number,created_at,ordered_by,auto,order_lines(id)").eq("resto_id",S.resto).eq("delivery_date",d).order("id");if(!error)found=data||[]}catch(e){}
+  try{if(navigator.onLine!==false){const{data,error}=await Promise.race([sb.from("orders").select("id,number,created_at,ordered_by,auto,order_lines(id)").eq("resto_id",S.resto).eq("delivery_date",d).order("id"),new Promise(r=>setTimeout(()=>r({error:"timeout"}),4000))]);if(!error)found=data||[]}}catch(e){}
   const queued=OUT.filter(x=>x.fn==="place_order"&&x.args.p_resto===S.resto).length;const auto=autoCoversNext()&&!found.some(o=>o.auto);
   if(!found.length&&!queued&&!auto)return next();
   const s=sheet(t("dup_title")+" "+dfmt(d,{weekday:"long",day:"numeric",month:"long"}),h("div",{},
