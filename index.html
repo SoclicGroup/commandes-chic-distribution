@@ -404,7 +404,7 @@ const plural=(n,k)=>n+" "+(Number(n)===1?t(k+"1"):t(k));
 
 /* ---------- Utilitaires ---------- */
 const $app=document.getElementById("app");
-const EMO={"🚚":"truck","🔁":"repeat","📋":"clipboard","🛒":"cart","⚠":"alert","✅":"checkc","📦":"box","🍗":"store","📊":"chart","🧾":"receipt","⚡":"repeat","🔔":"bell","📷":"camera","🖨":"printer","📍":"pin","🗑":"trash","↩":"undo","⬇":"download","⬆":"upload","⏳":"clock","📨":"send","📡":"offline","✉":"mail","💾":"save","🧪":"flask","⭐":"grid","❄":"snow","🥬":"leaf","🥫":"jar","🥤":"cup","🧽":"spray","⏭":"skip","🔄":"sync","💬":"note","⏰":"clock","👋":null,"✔":"checkc","🗓":"clock","📞":"phone"};
+const EMO={"🚚":"truck","🔁":"repeat","📋":"clipboard","🛒":"cart","⚠":"alert","✅":"checkc","📦":"box","🍗":"store","📊":"chart","🧾":"receipt","⚡":"repeat","🔔":"bell","📷":"camera","🖨":"printer","📍":"pin","🗑":"trash","↩":"undo","⬇":"download","⬆":"upload","⏳":"clock","📨":"send","📡":"offline","✉":"mail","💾":"save","🧪":"flask","⭐":"grid","❄":"snow","🥬":"leaf","🥫":"jar","🥤":"cup","🧽":"spray","⏭":"skip","🔄":"sync","💬":"note","⏰":"clock","👋":null,"✔":"checkc","🗓":"clock","📞":"phone","🧭":"chart"};
 const EMO_SPLIT=/(\p{Extended_Pictographic}️?⃣?|[⬆⬇⏭]️?)/u,EMO_TEST=/\p{Extended_Pictographic}|[⬆⬇⏭]/u;
 function iconEl(k){const sp=document.createElement("span");sp.className="i";sp.setAttribute("aria-hidden","true");sp.innerHTML=ICON[k];return sp}
 function textParts(str){if(!EMO_TEST.test(str))return[document.createTextNode(str)];const out=[];let afterIcon=false;
@@ -516,7 +516,7 @@ function qtySheet(title,sub,init,onOk,extra){
 }
 
 /* ---------- Chargement des données ---------- */
-function applySettings(rows){for(const row of rows||[]){if(row.key==="company")S.company=row.value||{};if(row.key==="reminder")S.reminder=row.value||{};if(row.key==="report")S.report=row.value||{};if(row.key==="invoice_mail")S.invMail=row.value||{};if(row.key==="test_mode")S.test=row.value||{};if(row.key==="tour")S.tour=row.value||{};if(row.key==="auto")S.autoCfg=row.value||{};if(row.key==="stock_rules")S.stockRules=row.value||{};if(row.key==="closed_days")S.closed=row.value||{};if(row.key==="announce")S.announce=row.value||{}}testBadge()}
+function applySettings(rows){for(const row of rows||[]){if(row.key==="company")S.company=row.value||{};if(row.key==="reminder")S.reminder=row.value||{};if(row.key==="report")S.report=row.value||{};if(row.key==="invoice_mail")S.invMail=row.value||{};if(row.key==="test_mode")S.test=row.value||{};if(row.key==="tour")S.tour=row.value||{};if(row.key==="auto")S.autoCfg=row.value||{};if(row.key==="stock_rules")S.stockRules=row.value||{};if(row.key==="closed_days")S.closed=row.value||{};if(row.key==="announce")S.announce=row.value||{};if(row.key==="fast_locs")S.fastLocs=row.value||{}}testBadge()}
 async function loadBase(){
   try{
     const[p,c,r,s]=await Promise.all([sb.from("products").select("*").order("sort"),sb.from("categories").select("*").order("sort"),sb.from("restaurants").select("*").order("sort"),sb.from("settings").select("*")]);
@@ -610,7 +610,40 @@ function locationSheet(loc){const items=S.products.filter(p=>p.active&&p.locatio
       h("button",{class:"btn acc",style:"flex:1",onclick:()=>{s.close();S.invLoc=loc;go("d_inv")}},t("count_here")))))}
 function locationsSheet(){const L=allLocs();
   const s=sheet("📍 "+t("locations"),h("div",{},L.length?h("div",{class:"card",style:"padding:4px 14px;margin-bottom:12px"},L.map(loc=>h("button",{class:"lr",style:"width:100%;text-align:left",onclick:()=>{s.close();locationSheet(loc)}},h("span",{class:"pill loc big"},loc),h("div",{class:"sp"}),h("span",{class:"muted small"},plural(S.products.filter(p=>p.active&&p.location===loc).length,"products_count")),h("span",{class:"muted b"},"›")))):h("p",{class:"muted"},"—"),
+    h("button",{class:"btn light w",style:"margin-bottom:10px",onclick:()=>{s.close();slottingSheet()}},"🧭 "+t("slot_title")),
     h("button",{class:"btn acc w",disabled:!L.length,onclick:()=>{s.close();savePDF(locLabelsPDF(L),"etiquettes-emplacements.pdf")}},"🖨️ "+t("loc_labels")+" ("+L.length+")")))}
+/* Rangement conseillé : les produits préparés le plus souvent vont dans les zones rapides */
+Object.assign(T.fr,{slot_deliv:"livraisons",slot_title:"Rangement conseillé",slot_sub:"Selon les préparations des 90 derniers jours",slot_fast:"Zones rapides",slot_fast_sub:"Touchez les emplacements proches de la zone de préparation",slot_near:"À rapprocher",slot_near_sub:"Préparés très souvent mais rangés loin",slot_far:"À éloigner",slot_far_sub:"Rarement préparés mais occupent une zone rapide",slot_top:"Les plus préparés",slot_move:"Déplacer",slot_none:"Aucun emplacement",slot_ok:"Le rangement est déjà optimal",slot_nodata:"Pas encore assez de livraisons",slot_picks:"fois"});
+Object.assign(T.en,{slot_deliv:"deliveries",slot_title:"Suggested layout",slot_sub:"Based on picks over the last 90 days",slot_fast:"Fast zones",slot_fast_sub:"Tap the locations close to the packing area",slot_near:"Move closer",slot_near_sub:"Picked very often but stored far away",slot_far:"Move away",slot_far_sub:"Rarely picked but using a fast zone",slot_top:"Most picked",slot_move:"Move",slot_none:"No location",slot_ok:"Layout is already optimal",slot_nodata:"Not enough deliveries yet",slot_picks:"times"});
+Object.assign(T.de,{slot_deliv:"Lieferungen",slot_title:"Empfohlene Lagerung",slot_sub:"Nach Kommissionierungen der letzten 90 Tage",slot_fast:"Schnelle Zonen",slot_fast_sub:"Tippen Sie auf die Plätze nahe der Packzone",slot_near:"Näher lagern",slot_near_sub:"Sehr oft kommissioniert, aber weit weg",slot_far:"Weiter weg lagern",slot_far_sub:"Selten kommissioniert, belegt aber eine schnelle Zone",slot_top:"Am häufigsten",slot_move:"Verschieben",slot_none:"Kein Platz",slot_ok:"Die Lagerung ist bereits optimal",slot_nodata:"Noch nicht genug Lieferungen",slot_picks:"Mal"});
+Object.assign(T.it,{slot_deliv:"consegne",slot_title:"Disposizione consigliata",slot_sub:"In base ai prelievi degli ultimi 90 giorni",slot_fast:"Zone rapide",slot_fast_sub:"Tocca le ubicazioni vicine alla zona di preparazione",slot_near:"Da avvicinare",slot_near_sub:"Prelevati spesso ma lontani",slot_far:"Da allontanare",slot_far_sub:"Prelevati raramente ma in zona rapida",slot_top:"I più prelevati",slot_move:"Sposta",slot_none:"Nessuna ubicazione",slot_ok:"La disposizione è già ottimale",slot_nodata:"Non ci sono ancora abbastanza consegne",slot_picks:"volte"});
+Object.assign(T.sq,{slot_deliv:"dorëzime",slot_title:"Renditja e këshilluar",slot_sub:"Sipas përgatitjeve të 90 ditëve të fundit",slot_fast:"Zonat e shpejta",slot_fast_sub:"Prekni vendet afër zonës së përgatitjes",slot_near:"Për t'u afruar",slot_near_sub:"Përgatiten shpesh por janë larg",slot_far:"Për t'u larguar",slot_far_sub:"Përgatiten rrallë por zënë zonë të shpejtë",slot_top:"Më të përgatiturat",slot_move:"Zhvendos",slot_none:"Pa vend",slot_ok:"Renditja është tashmë optimale",slot_nodata:"Ende jo mjaft dorëzime",slot_picks:"herë"});
+async function slotPicks(){const since=new Date(Date.now()-90*864e5).toISOString();
+  const{data:os,error}=await sb.from("orders").select("id").eq("status","delivered").gte("delivered_at",since).limit(5000);if(error)throw error;
+  const ids=(os||[]).map(o=>o.id),ch=[];for(let i=0;i<ids.length;i+=40)ch.push(ids.slice(i,i+40));
+  const res=await Promise.all(ch.map(c=>sb.from("order_lines").select("product_id,qty_delivered").in("order_id",c).limit(1000)));
+  const picks={};for(const r of res){if(r.error)throw r.error;for(const l of r.data||[])if(num(l.qty_delivered)>0)picks[l.product_id]=(picks[l.product_id]||0)+1}
+  return{picks,orders:ids.length}}
+async function slottingSheet(){const body=h("div",{},h("p",{class:"muted"},"…"));const s=sheet("🧭 "+t("slot_title"),body);
+  let data;try{data=await slotPicks()}catch(e){body.replaceChildren(h("p",{class:"muted"},errMsg(e)));return}
+  const{picks}=data;const total=Object.values(picks).reduce((a,b)=>a+b,0);
+  const ranked=S.products.filter(p=>p.active&&picks[p.id]).sort((a,b)=>picks[b.id]-picks[a.id]);
+  const cls={};let cum=0;for(const p of ranked){cum+=picks[p.id];cls[p.id]=cum<=total*.8||cum-picks[p.id]<total*.8?"A":cum<=total*.95?"B":"C"}
+  for(const p of S.products)if(p.active&&!picks[p.id])cls[p.id]="C";
+  const abcPill=c=>h("span",{class:"pill "+(c==="A"?"acc":c==="B"?"":"dark"),style:"min-width:26px;justify-content:center"},c);
+  const moveBtn=p=>h("button",{class:"btn light",style:"padding:8px 12px;min-height:0;font-size:14px",onclick:()=>textSheet("📍 "+p.name,p.location,async v=>{await rpc("depot_set_location",{p_pin:S.depotPin||S.adminPin,p_product:p.id,p_loc:v});p.location=v;toast("✓ "+p.name+" → "+(v||"—"),"ok");draw()})},t("slot_move"));
+  const row=p=>h("div",{class:"lr"},h("div",{class:"em",style:tint(p.cat)},pimg(p)),h("div",{class:"sp"},h("div",{class:"nm"},p.name),h("div",{class:"row",style:"gap:6px;margin-top:4px;flex-wrap:wrap"},abcPill(cls[p.id]),h("span",{class:"pill"},(picks[p.id]||0)+" "+t("slot_picks")),p.location?h("span",{class:"pill loc"},"📍 "+p.location):h("span",{class:"pill bad"},t("slot_none")))),moveBtn(p));
+  const card=(title,sub,items)=>[h("div",{class:"sec",style:"margin-top:18px"},h("h2",{style:"font-size:17px"},title),h("span",{class:"pill dark"},String(items.length))),h("p",{class:"muted small",style:"margin:-4px 0 8px"},sub),h("div",{class:"card",style:"padding:4px 14px"},items.map(row))];
+  function draw(){const fast=new Set((S.fastLocs&&S.fastLocs.locs)||[]);const L=allLocs();
+    const near=ranked.filter(p=>cls[p.id]==="A"&&!fast.has(p.location||"")).slice(0,25);
+    const far=S.products.filter(p=>p.active&&cls[p.id]==="C"&&p.location&&fast.has(p.location)).sort((a,b)=>(picks[a.id]||0)-(picks[b.id]||0)).slice(0,25);
+    const zones=h("div",{class:"row",style:"gap:8px;flex-wrap:wrap"},L.map(loc=>h("button",{class:"pill "+(fast.has(loc)?"dark":"loc"),style:"border:0;cursor:pointer;padding:9px 13px;font-size:14px",onclick:async()=>{const n=new Set(fast);n.has(loc)?n.delete(loc):n.add(loc);const v={locs:[...n]};S.fastLocs=v;draw();try{await rpc("depot_set_fast_locs",{p_pin:S.depotPin||S.adminPin,p_locs:v.locs})}catch(e){toast(errMsg(e),"bad")}}},loc)));
+    body.replaceChildren(...[h("p",{class:"muted",style:"margin-top:-6px"},t("slot_sub")+" · "+data.orders+" "+t("slot_deliv")),
+      !ranked.length?h("p",{class:"muted"},t("slot_nodata")):null,
+      h("div",{class:"sec",style:"margin-top:10px"},h("h2",{style:"font-size:17px"},t("slot_fast"))),h("p",{class:"muted small",style:"margin:-4px 0 10px"},t("slot_fast_sub")),L.length?zones:h("p",{class:"muted"},t("slot_none")),
+      fast.size&&ranked.length?(near.length||far.length?[near.length?card(t("slot_near"),t("slot_near_sub"),near):null,far.length?card(t("slot_far"),t("slot_far_sub"),far):null]:h("p",{class:"pill ok",style:"margin-top:16px"},"✔ "+t("slot_ok"))):null,
+      ranked.length?card(t("slot_top"),"A = 80 % · B = 15 % · C = 5 %",ranked.slice(0,20)):null].flat(9).filter(x=>x!=null&&x!==false))}
+  draw()}
 function locLabelsPDF(L){const{jsPDF}=window.jspdf;const doc=new jsPDF({unit:"mm",format:"a4"});const W=105,H=74.25;
   L.forEach((loc,i)=>{if(i&&i%8===0)doc.addPage();const k=i%8,x=(k%2)*W,y=Math.floor(k/2)*H;doc.setDrawColor(220,223,228);doc.setLineWidth(.2);doc.rect(x+3,y+3,W-6,H-6);
     drawQR(doc,"LOC:"+loc,x+8,y+10,52);doc.setTextColor(21,24,28);doc.setFont("helvetica","bold");doc.setFontSize(loc.length>6?26:38);doc.text(pdfTxt(loc),x+66,y+32);
