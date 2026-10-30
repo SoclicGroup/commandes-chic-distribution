@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="theme-color" content="#F4F1EC">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Chic Distribution">
 <link rel="manifest" href="manifest.webmanifest">
@@ -252,7 +253,12 @@ const cap=s=>s?s.charAt(0).toUpperCase()+s.slice(1):s;
 function dayLabel(iso){const td=zurichToday();if(iso===td)return t("today");if(iso===addDays(td,1))return t("tomorrow");return dfmt(iso,{weekday:"long",day:"numeric",month:"short"})}
 let toastT;function toast(msg,kind){document.querySelectorAll(".toast").forEach(e=>e.remove());const el=h("div",{class:"toast "+(kind||"")},msg);document.body.append(el);clearTimeout(toastT);toastT=setTimeout(()=>el.remove(),2200)}
 function buzz(ok=true){try{navigator.vibrate&&navigator.vibrate(ok?40:[60,40,60])}catch(e){}beep(ok?880:300,ok?.08:.18)}
-let actx;function beep(f=880,d=.1){try{actx=actx||new(window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),g=actx.createGain();o.frequency.value=f;o.connect(g);g.connect(actx.destination);g.gain.setValueAtTime(.15,actx.currentTime);g.gain.exponentialRampToValueAtTime(.001,actx.currentTime+d);o.start();o.stop(actx.currentTime+d)}catch(e){}}
+let actx;
+/* iPad/iPhone : le son doit être débloqué par un premier toucher */
+function unlockAudio(){try{actx=actx||new(window.AudioContext||window.webkitAudioContext)();if(actx.state==="suspended")actx.resume();const b=actx.createBuffer(1,1,22050),src=actx.createBufferSource();src.buffer=b;src.connect(actx.destination);src.start(0)}catch(e){}}
+["touchend","click"].forEach(ev=>addEventListener(ev,unlockAudio,{passive:true}));
+document.addEventListener("visibilitychange",()=>{if(!document.hidden){try{actx&&actx.state==="suspended"&&actx.resume()}catch(e){}if(S.mode==="resto")checkReminder();flush()}});
+function beep(f=880,d=.1){try{actx=actx||new(window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),g=actx.createGain();o.frequency.value=f;o.connect(g);g.connect(actx.destination);g.gain.setValueAtTime(.15,actx.currentTime);g.gain.exponentialRampToValueAtTime(.001,actx.currentTime+d);o.start();o.stop(actx.currentTime+d)}catch(e){}}
 function errMsg(e){return (e&&(e.message||e.error_description))||String(e)}
 async function rpcRaw(fn,args){const{data,error}=await sb.rpc(fn,args);if(error)throw error;return data}
 async function rpc(fn,args){const{data,error}=await sb.rpc(fn,args);if(error){if(error.code==="28000"||/PIN/.test(error.message)){toast(t("wrong_pin"),"bad");if(S.mode==="admin"){S.adminPin="";SS.set("apin","")}}throw error}return data}
