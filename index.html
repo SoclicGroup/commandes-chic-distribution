@@ -381,7 +381,10 @@ a.btn{text-decoration:none}
 <script>
 "use strict";
 const CONFIG={SUPABASE_URL:"https://snwqtnszdasofgzropma.supabase.co",SUPABASE_KEY:"sb_publishable_039BW7PJ3iklMV-064jytA_1fI0e630"};
-const sb=supabase.createClient(CONFIG.SUPABASE_URL,CONFIG.SUPABASE_KEY,{auth:{persistSession:false},db:{retry:false}});
+const fetchR=async(u,o)=>{const m=((o&&o.method)||"GET").toUpperCase(),safe=m==="GET"||m==="HEAD";for(let i=0;;i++){
+  try{const r=await fetch(u,o);if(safe&&(r.status===503||r.status===520)&&i<2&&navigator.onLine){await new Promise(z=>setTimeout(z,700*(i+1)));continue}return r}
+  catch(e){if(safe&&i<2&&navigator.onLine&&!(o&&o.signal&&o.signal.aborted)){await new Promise(z=>setTimeout(z,700*(i+1)));continue}throw e}}};
+const sb=supabase.createClient(CONFIG.SUPABASE_URL,CONFIG.SUPABASE_KEY,{auth:{persistSession:false},db:{retry:false},global:{fetch:fetchR}});
 
 /* ---------- Traductions ---------- */
 const LANGS=[["fr","FR"],["de","DE"],["it","IT"],["en","EN"],["sq","SQ"]];
@@ -501,7 +504,7 @@ function unlockAudio(){try{actx=actx||new(window.AudioContext||window.webkitAudi
 document.addEventListener("visibilitychange",()=>{if(!document.hidden){try{actx&&actx.state==="suspended"&&actx.resume()}catch(e){}if(S.mode==="resto")checkReminder();flush()}});
 function beep(f=880,d=.1){try{actx=actx||new(window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),g=actx.createGain();o.frequency.value=f;o.connect(g);g.connect(actx.destination);g.gain.setValueAtTime(.15,actx.currentTime);g.gain.exponentialRampToValueAtTime(.001,actx.currentTime+d);o.start();o.stop(actx.currentTime+d)}catch(e){}}
 const SRV_ERR={"Commande vide":"srv_empty","Commande déjà livrée":"srv_done","Quantité invalide":"srv_qty","Prénom obligatoire":"need_name","PIN incorrect":"wrong_pin","Commande introuvable":"srv_nf"};
-function errMsg(e){if(e&&!e.code&&/failed to fetch|networkerror|load failed/i.test(e.message||""))return t("net_err");const m=(e&&(e.message||e.error_description))||String(e);return SRV_ERR[m]?t(SRV_ERR[m]):m}
+function errMsg(e){if(e&&!e.code&&/failed to fetch|networkerror|load failed/i.test(e.message||""))return t("net_err");if(e&&/^PGRST0/.test(e.code||""))return t("srv_busy");const m=(e&&(e.message||e.error_description))||String(e);return SRV_ERR[m]?t(SRV_ERR[m]):m}
 /* Lecture complète par pages de 1000 (limite Supabase) */
 async function allRows(mk){let out=[];for(let i=0;i<200000;i+=1000){const{data,error}=await mk().range(i,i+999);if(error)throw error;out=out.concat(data||[]);if(!data||data.length<1000)break}return{data:out}}
 async function rpcRaw(fn,args){const{data,error}=await sb.rpc(fn,args);if(error)throw error;return data}
@@ -524,7 +527,7 @@ function applySettings(rows){for(const row of rows||[]){if(row.key==="company")S
 async function loadBase(){
   try{
     const[p,c,r,s]=await Promise.all([sb.from("products").select("*").order("sort"),sb.from("categories").select("*").order("sort"),sb.from("restaurants").select("*").order("sort"),sb.from("settings").select("*")]);
-    if(p.error)throw p.error;if(c.error)throw c.error;S.products=p.data;S.cats=c.data||[];S.restos=r.data||[];applySettings(s.data);
+    if(p.error)throw p.error;if(c.error)throw c.error;if(r.error)throw r.error;if(s.error)throw s.error;S.products=p.data;S.cats=c.data||[];S.restos=r.data||[];applySettings(s.data);
     LS.set("base",{products:S.products,cats:S.cats,restos:S.restos,settings:s.data||[]});
   }catch(e){const b=LS.get("base",null);if(!b)throw e;S.products=b.products;S.cats=b.cats;S.restos=b.restos;applySettings(b.settings)}
   loadPhotos();loadLots();
@@ -546,8 +549,8 @@ async function loadPhotos(){if(phBusy)return;phBusy=true;let changed=false;
       for(const r of data||[]){const p=P(r.product_id);if(p){phCache[r.product_id]={v:p.photo_v,d:r.data};changed=true}}}
   }catch(e){}finally{phBusy=false}
   if(changed){phSave();if(!document.querySelector(".sheet")&&!["INPUT","TEXTAREA"].includes(document.activeElement?.tagName)&&S.view!=="r_cart")refresh()}}
-async function loadPars(){try{let q=sb.from("resto_par").select("resto_id,product_id,par");if(S.mode==="resto")q=q.eq("resto_id",S.resto);const{data,error}=await q;if(error)throw error;
-  const o={};for(const r of data||[])(o[r.resto_id]=o[r.resto_id]||{})[r.product_id]=num(r.par);S.allPars=o;LS.set("pars",o)}catch(e){S.allPars=LS.get("pars",{})}}
+async function loadPars(){S.parsOk=false;try{let q=sb.from("resto_par").select("resto_id,product_id,par");if(S.mode==="resto")q=q.eq("resto_id",S.resto);const{data,error}=await q;if(error)throw error;
+  const o={};for(const r of data||[])(o[r.resto_id]=o[r.resto_id]||{})[r.product_id]=num(r.par);S.allPars=o;S.parsOk=true;LS.set("pars",o)}catch(e){S.allPars=LS.get("pars",{})}}
 const parOf=(pid,rid)=>(((S.allPars||{})[rid||S.resto])||{})[pid]||0;
 const nrm=x=>String(x||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g," ").trim();
 function lev(a,b,max){if(Math.abs(a.length-b.length)>max)return max+1;let pr=Array.from({length:b.length+1},(_,i)=>i);
@@ -622,11 +625,11 @@ function locationsSheet(){const L=allLocs();
     h("button",{class:"btn light w",style:"margin-bottom:10px",onclick:()=>{s.close();slottingSheet()}},"🧭 "+t("slot_title")),
     h("button",{class:"btn acc w",disabled:!L.length,onclick:()=>{s.close();savePDF(locLabelsPDF(L),"etiquettes-emplacements.pdf")}},"🖨️ "+t("loc_labels")+" ("+L.length+")")))}
 /* Rangement conseillé : les produits préparés le plus souvent vont dans les zones rapides */
-Object.assign(T.fr,{dnote_short:"BL",ex_supplier:"Ex. Prodega, Transgourmet…",mem_full:"Mémoire de l'appareil pleine : la file hors ligne n'a pas pu être enregistrée",no_conn:"Connexion impossible. Vérifiez internet.",srv_empty:"Commande vide : aucun produit disponible",srv_done:"Commande déjà livrée",srv_qty:"Quantité invalide",srv_nf:"Commande introuvable",net_err:"Pas de connexion internet, réessayez",group_auto:"rempli automatiquement dans chaque commande.",credit_k:"Avoir",over_title:"Plus que commandé",over_sub:"Vous livrez plus que la quantité commandée. Vérifiez avant de facturer.",slot_deliv:"livraisons",slot_title:"Rangement conseillé",slot_sub:"Selon les préparations des 90 derniers jours",slot_fast:"Zones rapides",slot_fast_sub:"Touchez les emplacements proches de la zone de préparation",slot_near:"À rapprocher",slot_near_sub:"Préparés très souvent mais rangés loin",slot_far:"À éloigner",slot_far_sub:"Rarement préparés mais occupent une zone rapide",slot_top:"Les plus préparés",slot_move:"Déplacer",slot_none:"Aucun emplacement",slot_ok:"Le rangement est déjà optimal",slot_nodata:"Pas encore assez de livraisons",slot_picks:"fois"});
-Object.assign(T.en,{dnote_short:"Delivery note",ex_supplier:"e.g. Prodega, Transgourmet…",mem_full:"Device storage full: the offline queue could not be saved",no_conn:"No connection. Check the internet.",srv_empty:"Empty order: no product available",srv_done:"Order already delivered",srv_qty:"Invalid quantity",srv_nf:"Order not found",net_err:"No internet connection, please try again",group_auto:"filled in automatically in each order.",credit_k:"Credit note",over_title:"More than ordered",over_sub:"You are delivering more than ordered. Check before invoicing.",slot_deliv:"deliveries",slot_title:"Suggested layout",slot_sub:"Based on picks over the last 90 days",slot_fast:"Fast zones",slot_fast_sub:"Tap the locations close to the packing area",slot_near:"Move closer",slot_near_sub:"Picked very often but stored far away",slot_far:"Move away",slot_far_sub:"Rarely picked but using a fast zone",slot_top:"Most picked",slot_move:"Move",slot_none:"No location",slot_ok:"Layout is already optimal",slot_nodata:"Not enough deliveries yet",slot_picks:"times"});
-Object.assign(T.de,{dnote_short:"Lieferschein",ex_supplier:"z. B. Prodega, Transgourmet…",mem_full:"Gerätespeicher voll: Offline-Warteschlange konnte nicht gespeichert werden",no_conn:"Keine Verbindung. Internet prüfen.",srv_empty:"Leere Bestellung: kein Produkt verfügbar",srv_done:"Bestellung bereits geliefert",srv_qty:"Ungültige Menge",srv_nf:"Bestellung nicht gefunden",net_err:"Keine Internetverbindung, bitte erneut versuchen",group_auto:"wird in jeder Bestellung automatisch ausgefüllt.",credit_k:"Gutschrift",over_title:"Mehr als bestellt",over_sub:"Sie liefern mehr als bestellt. Bitte vor der Rechnung prüfen.",slot_deliv:"Lieferungen",slot_title:"Empfohlene Lagerung",slot_sub:"Nach Kommissionierungen der letzten 90 Tage",slot_fast:"Schnelle Zonen",slot_fast_sub:"Tippen Sie auf die Plätze nahe der Packzone",slot_near:"Näher lagern",slot_near_sub:"Sehr oft kommissioniert, aber weit weg",slot_far:"Weiter weg lagern",slot_far_sub:"Selten kommissioniert, belegt aber eine schnelle Zone",slot_top:"Am häufigsten",slot_move:"Verschieben",slot_none:"Kein Platz",slot_ok:"Die Lagerung ist bereits optimal",slot_nodata:"Noch nicht genug Lieferungen",slot_picks:"Mal"});
-Object.assign(T.it,{dnote_short:"DDT",ex_supplier:"Es. Prodega, Transgourmet…",mem_full:"Memoria del dispositivo piena: la coda offline non è stata salvata",no_conn:"Connessione impossibile. Verificate internet.",srv_empty:"Ordine vuoto: nessun prodotto disponibile",srv_done:"Ordine già consegnato",srv_qty:"Quantità non valida",srv_nf:"Ordine non trovato",net_err:"Nessuna connessione internet, riprovate",group_auto:"compilato automaticamente in ogni ordine.",credit_k:"Nota di credito",over_title:"Più del richiesto",over_sub:"State consegnando più della quantità ordinata. Verificate prima di fatturare.",slot_deliv:"consegne",slot_title:"Disposizione consigliata",slot_sub:"In base ai prelievi degli ultimi 90 giorni",slot_fast:"Zone rapide",slot_fast_sub:"Tocca le ubicazioni vicine alla zona di preparazione",slot_near:"Da avvicinare",slot_near_sub:"Prelevati spesso ma lontani",slot_far:"Da allontanare",slot_far_sub:"Prelevati raramente ma in zona rapida",slot_top:"I più prelevati",slot_move:"Sposta",slot_none:"Nessuna ubicazione",slot_ok:"La disposizione è già ottimale",slot_nodata:"Non ci sono ancora abbastanza consegne",slot_picks:"volte"});
-Object.assign(T.sq,{dnote_short:"Fletëdorëzim",ex_supplier:"P.sh. Prodega, Transgourmet…",mem_full:"Memoria e pajisjes plot: radha jashtë linje nuk u ruajt",no_conn:"Nuk ka lidhje. Kontrolloni internetin.",srv_empty:"Porosi bosh: asnjë produkt i disponueshëm",srv_done:"Porosia është dorëzuar tashmë",srv_qty:"Sasi e pavlefshme",srv_nf:"Porosia nuk u gjet",net_err:"Nuk ka lidhje interneti, provoni përsëri",group_auto:"plotësohet automatikisht në çdo porosi.",credit_k:"Notë krediti",over_title:"Më shumë se porosia",over_sub:"Po dorëzoni më shumë se sasia e porositur. Kontrolloni para faturimit.",slot_deliv:"dorëzime",slot_title:"Renditja e këshilluar",slot_sub:"Sipas përgatitjeve të 90 ditëve të fundit",slot_fast:"Zonat e shpejta",slot_fast_sub:"Prekni vendet afër zonës së përgatitjes",slot_near:"Për t'u afruar",slot_near_sub:"Përgatiten shpesh por janë larg",slot_far:"Për t'u larguar",slot_far_sub:"Përgatiten rrallë por zënë zonë të shpejtë",slot_top:"Më të përgatiturat",slot_move:"Zhvendos",slot_none:"Pa vend",slot_ok:"Renditja është tashmë optimale",slot_nodata:"Ende jo mjaft dorëzime",slot_picks:"herë"});
+Object.assign(T.fr,{srv_busy:"Serveur momentanément indisponible, réessayez dans un instant",retry:"Réessayer",dnote_short:"BL",ex_supplier:"Ex. Prodega, Transgourmet…",mem_full:"Mémoire de l'appareil pleine : la file hors ligne n'a pas pu être enregistrée",no_conn:"Connexion impossible. Vérifiez internet.",srv_empty:"Commande vide : aucun produit disponible",srv_done:"Commande déjà livrée",srv_qty:"Quantité invalide",srv_nf:"Commande introuvable",net_err:"Pas de connexion internet, réessayez",group_auto:"rempli automatiquement dans chaque commande.",credit_k:"Avoir",over_title:"Plus que commandé",over_sub:"Vous livrez plus que la quantité commandée. Vérifiez avant de facturer.",slot_deliv:"livraisons",slot_title:"Rangement conseillé",slot_sub:"Selon les préparations des 90 derniers jours",slot_fast:"Zones rapides",slot_fast_sub:"Touchez les emplacements proches de la zone de préparation",slot_near:"À rapprocher",slot_near_sub:"Préparés très souvent mais rangés loin",slot_far:"À éloigner",slot_far_sub:"Rarement préparés mais occupent une zone rapide",slot_top:"Les plus préparés",slot_move:"Déplacer",slot_none:"Aucun emplacement",slot_ok:"Le rangement est déjà optimal",slot_nodata:"Pas encore assez de livraisons",slot_picks:"fois"});
+Object.assign(T.en,{srv_busy:"Server briefly unavailable, try again in a moment",retry:"Retry",dnote_short:"Delivery note",ex_supplier:"e.g. Prodega, Transgourmet…",mem_full:"Device storage full: the offline queue could not be saved",no_conn:"No connection. Check the internet.",srv_empty:"Empty order: no product available",srv_done:"Order already delivered",srv_qty:"Invalid quantity",srv_nf:"Order not found",net_err:"No internet connection, please try again",group_auto:"filled in automatically in each order.",credit_k:"Credit note",over_title:"More than ordered",over_sub:"You are delivering more than ordered. Check before invoicing.",slot_deliv:"deliveries",slot_title:"Suggested layout",slot_sub:"Based on picks over the last 90 days",slot_fast:"Fast zones",slot_fast_sub:"Tap the locations close to the packing area",slot_near:"Move closer",slot_near_sub:"Picked very often but stored far away",slot_far:"Move away",slot_far_sub:"Rarely picked but using a fast zone",slot_top:"Most picked",slot_move:"Move",slot_none:"No location",slot_ok:"Layout is already optimal",slot_nodata:"Not enough deliveries yet",slot_picks:"times"});
+Object.assign(T.de,{srv_busy:"Server kurz nicht erreichbar, gleich erneut versuchen",retry:"Erneut versuchen",dnote_short:"Lieferschein",ex_supplier:"z. B. Prodega, Transgourmet…",mem_full:"Gerätespeicher voll: Offline-Warteschlange konnte nicht gespeichert werden",no_conn:"Keine Verbindung. Internet prüfen.",srv_empty:"Leere Bestellung: kein Produkt verfügbar",srv_done:"Bestellung bereits geliefert",srv_qty:"Ungültige Menge",srv_nf:"Bestellung nicht gefunden",net_err:"Keine Internetverbindung, bitte erneut versuchen",group_auto:"wird in jeder Bestellung automatisch ausgefüllt.",credit_k:"Gutschrift",over_title:"Mehr als bestellt",over_sub:"Sie liefern mehr als bestellt. Bitte vor der Rechnung prüfen.",slot_deliv:"Lieferungen",slot_title:"Empfohlene Lagerung",slot_sub:"Nach Kommissionierungen der letzten 90 Tage",slot_fast:"Schnelle Zonen",slot_fast_sub:"Tippen Sie auf die Plätze nahe der Packzone",slot_near:"Näher lagern",slot_near_sub:"Sehr oft kommissioniert, aber weit weg",slot_far:"Weiter weg lagern",slot_far_sub:"Selten kommissioniert, belegt aber eine schnelle Zone",slot_top:"Am häufigsten",slot_move:"Verschieben",slot_none:"Kein Platz",slot_ok:"Die Lagerung ist bereits optimal",slot_nodata:"Noch nicht genug Lieferungen",slot_picks:"Mal"});
+Object.assign(T.it,{srv_busy:"Server momentaneamente non disponibile, riprovate tra poco",retry:"Riprova",dnote_short:"DDT",ex_supplier:"Es. Prodega, Transgourmet…",mem_full:"Memoria del dispositivo piena: la coda offline non è stata salvata",no_conn:"Connessione impossibile. Verificate internet.",srv_empty:"Ordine vuoto: nessun prodotto disponibile",srv_done:"Ordine già consegnato",srv_qty:"Quantità non valida",srv_nf:"Ordine non trovato",net_err:"Nessuna connessione internet, riprovate",group_auto:"compilato automaticamente in ogni ordine.",credit_k:"Nota di credito",over_title:"Più del richiesto",over_sub:"State consegnando più della quantità ordinata. Verificate prima di fatturare.",slot_deliv:"consegne",slot_title:"Disposizione consigliata",slot_sub:"In base ai prelievi degli ultimi 90 giorni",slot_fast:"Zone rapide",slot_fast_sub:"Tocca le ubicazioni vicine alla zona di preparazione",slot_near:"Da avvicinare",slot_near_sub:"Prelevati spesso ma lontani",slot_far:"Da allontanare",slot_far_sub:"Prelevati raramente ma in zona rapida",slot_top:"I più prelevati",slot_move:"Sposta",slot_none:"Nessuna ubicazione",slot_ok:"La disposizione è già ottimale",slot_nodata:"Non ci sono ancora abbastanza consegne",slot_picks:"volte"});
+Object.assign(T.sq,{srv_busy:"Serveri përkohësisht i padisponueshëm, provoni pas pak",retry:"Provo përsëri",dnote_short:"Fletëdorëzim",ex_supplier:"P.sh. Prodega, Transgourmet…",mem_full:"Memoria e pajisjes plot: radha jashtë linje nuk u ruajt",no_conn:"Nuk ka lidhje. Kontrolloni internetin.",srv_empty:"Porosi bosh: asnjë produkt i disponueshëm",srv_done:"Porosia është dorëzuar tashmë",srv_qty:"Sasi e pavlefshme",srv_nf:"Porosia nuk u gjet",net_err:"Nuk ka lidhje interneti, provoni përsëri",group_auto:"plotësohet automatikisht në çdo porosi.",credit_k:"Notë krediti",over_title:"Më shumë se porosia",over_sub:"Po dorëzoni më shumë se sasia e porositur. Kontrolloni para faturimit.",slot_deliv:"dorëzime",slot_title:"Renditja e këshilluar",slot_sub:"Sipas përgatitjeve të 90 ditëve të fundit",slot_fast:"Zonat e shpejta",slot_fast_sub:"Prekni vendet afër zonës së përgatitjes",slot_near:"Për t'u afruar",slot_near_sub:"Përgatiten shpesh por janë larg",slot_far:"Për t'u larguar",slot_far_sub:"Përgatiten rrallë por zënë zonë të shpejtë",slot_top:"Më të përgatiturat",slot_move:"Zhvendos",slot_none:"Pa vend",slot_ok:"Renditja është tashmë optimale",slot_nodata:"Ende jo mjaft dorëzime",slot_picks:"herë"});
 async function slotPicks(){const since=new Date(Date.now()-90*864e5).toISOString();
   const{data:os}=await allRows(()=>sb.from("orders").select("id").eq("status","delivered").gte("delivered_at",since).order("id"));
   const ids=(os||[]).map(o=>o.id),ch=[];for(let i=0;i<ids.length;i+=40)ch.push(ids.slice(i,i+40));
@@ -663,8 +666,10 @@ let testEl=null;
 function testBadge(){const on=!!(S.test&&S.test.on);document.body.classList.toggle("testing",on);if(!on){if(testEl){testEl.remove();testEl=null}return}
   if(!testEl){testEl=h("div",{class:"testb"});document.body.append(testEl)}testEl.textContent=t("test_badge")}
 /* Factures par e-mail */
+const mailing=new Set();
 async function mailInvoice(id,force){
   if(!force&&S.invMail&&S.invMail.enabled===false)return null;
+  if(!force){if(mailing.has(id))return null;mailing.add(id);setTimeout(()=>mailing.delete(id),30000)}
   try{const{doc}=await invoicePDF(id);const b64=doc.output("datauristring").split(",")[1];
     const r=await rpcRaw("send_invoice_email",{p_pin:S.depotPin||S.adminPin,p_invoice:id,p_pdf:b64,p_force:!!force});
     if(r&&r.to)toast("✉️ "+t("mail_sent")+" · "+r.to,"ok");return r}
@@ -1133,7 +1138,7 @@ VIEWS.d_prep=async function(orderId){
   if(!S.prep||S.prep.order.id!==orderId){
     let{data:o,error}=await sb.from("orders").select("*,order_lines(*)").eq("id",orderId).single();
     if(error&&isNetErr(error))o=LS.get("dopen",[]).find(x=>x.id===orderId);
-    if(!o)return go("d_orders");
+    if(!o){if(error)toast(errMsg(error),"bad");return go("d_orders")}
     if(o.status==="delivered"){toast(t("st_delivered"));return go("d_orders")}
     if(o.status==="new"&&navigator.onLine)rpc("depot_start",{p_pin:S.depotPin,p_order:o.id,p_by:S.who}).catch(()=>{});
     const loc=l=>(P(l.product_id)||{}).location||"";
@@ -1324,14 +1329,15 @@ function periodRange(p){const td=zurichToday();const y=+td.slice(0,4),m=+td.slic
   if(p==="month")return[iso(y,m),null];if(p==="last")return[m===1?iso(y-1,12):iso(y,m-1),iso(y,m)];if(p==="3m"){let mm=m-2,yy=y;if(mm<1){mm+=12;yy--}return[iso(yy,mm),null]}return[iso(y,1),null]}
 VIEWS.a_stats=needAdmin(async function(){
   mount(h("h1",{},"Statistiques"),h("div",{class:"empty"},"…"),adminNav("a_stats"));
-  try{await loadCosts()}catch(e){return}
+  const fail=e=>{if(S.view==="a_stats")mount(h("h1",{},"Statistiques"),h("div",{class:"empty"},h("div",{class:"e"},"📡"),errMsg(e),h("br"),h("button",{class:"btn acc",style:"margin-top:12px",onclick:()=>refresh()},t("retry"))),adminNav("a_stats"))};
+  try{await loadCosts()}catch(e){return fail(e)}
   await loadLots();
   const[from,to]=periodRange(S.period);
   const qi=()=>{let q=sb.from("invoices").select("*").gte("created_at",zts(from));if(to)q=q.lt("created_at",zts(to));return q.order("id")};
   const ql=()=>{let q=sb.from("order_lines").select("id,product_id,name,qty_ordered,qty_delivered,orders!inner(created_at,resto_id,status)").gte("orders.created_at",zts(from));if(to)q=q.lt("orders.created_at",zts(to));return q.order("id")};
   const qm=()=>{let q=sb.from("stock_moves").select("*").eq("kind","loss").gte("acted_at",zts(from));if(to)q=q.lt("acted_at",zts(to));return q.order("id")};
   const yStart=zurichToday().slice(0,4)-1+zurichToday().slice(4,7)+"-01";
-  const[inv,ol,ls,yr,sv]=await Promise.all([allRows(qi),allRows(ql),allRows(qm),allRows(()=>sb.from("invoices").select("id,created_at,total_ht,resto_id").gte("created_at",zts(yStart)).order("id")),rpc("admin_stock_value",{p_pin:S.adminPin})]);
+  let inv,ol,ls,yr,sv;try{[inv,ol,ls,yr,sv]=await Promise.all([allRows(qi),allRows(ql),allRows(qm),allRows(()=>sb.from("invoices").select("id,created_at,total_ht,resto_id").gte("created_at",zts(yStart)).order("id")),rpc("admin_stock_value",{p_pin:S.adminPin})])}catch(e){return fail(e)}
   if(S.view!=="a_stats")return;
   const invs=inv.data||[];const ca=invs.reduce((a,i)=>a+num(i.total_ht),0);const nOrders=invs.filter(i=>i.kind==="invoice").length;
   let cogs=0;const byProd={};for(const i of invs)for(const l of i.lines||[]){const sign=i.kind==="credit"?-1:1;const v=sign*num(l.qty)*num(l.price);cogs+=sign*num(l.qty)*(S.costs[l.product_id]||0);(byProd[l.product_id]=byProd[l.product_id]||{name:l.name,v:0,q:0}).v+=v;byProd[l.product_id].q+=sign*num(l.qty)}
@@ -1379,8 +1385,8 @@ VIEWS.a_stats=needAdmin(async function(){
     adminNav("a_stats"));
 });
 VIEWS.a_products=needAdmin(async function(){
-  if(!Object.keys(S.costs).length){try{await loadCosts()}catch(e){return}}
-  if(!S.parsLoaded){await loadPars();S.parsLoaded=true}
+  if(!Object.keys(S.costs).length){try{await loadCosts()}catch(e){toast(errMsg(e),"bad");return}}
+  if(!S.parsLoaded||!S.parsOk){await loadPars();S.parsLoaded=S.parsOk}
   const inp=h("input",{placeholder:t("search"),value:S.q,oninput:e=>{S.q=e.target.value;draw()}});const box=h("div",{class:"list"});
   function draw(){const q=S.q.trim().toLowerCase();const it=S.products.filter(p=>(S.cat==="all"||p.cat===S.cat)&&fmatch(p,q));const byCat={};for(const p of it)(byCat[p.cat]=byCat[p.cat]||[]).push(p);
     box.replaceChildren(...S.cats.filter(c=>byCat[c.id]).map(c=>h("div",{class:"card",style:"padding:6px 14px"},h("div",{class:"b cath","data-cat":c.id,style:"padding:10px 0 6px"},c.label),byCat[c.id].map(p=>h("button",{class:"lr",style:"width:100%;text-align:left;"+(p.active?"":"opacity:.45"),onclick:()=>editProduct(p)},
@@ -1415,7 +1421,7 @@ function editProduct(p){
       if(!f.name.value.trim())return f.name.focus();e.currentTarget.disabled=true;
       const data={id:p.id,cat:f.cat.value,name:f.name.value.trim(),unit:f.unit.value.trim(),price:Number(String(f.price.value).replace(",","."))||0,vat:Number(f.vat.value),ean:f.ean.value.trim(),min_stock:Number(f.min_stock.value)||0,location:f.location.value.trim(),active,cost:Number(String(f.cost.value).replace(",","."))||0};
       try{const id=await rpc("admin_save_product",{p_pin:S.adminPin,p:data});S.costs[id]=data.cost;
-        await rpc("admin_set_par",{p_pin:S.adminPin,p_rows:parIn.map(([r,i])=>({resto_id:r.id,product_id:id,par:Number(String(i.value).replace(",","."))||0}))});await loadPars();await loadBase();s.close();toast("✓ "+t("saved"),"ok");refresh()}catch(err){e.currentTarget.disabled=false;toast(/unique/.test(errMsg(err))?"Ce code-barres est déjà utilisé":errMsg(err),"bad")}}},t("save")))));
+        const chg=parIn.filter(([r,i])=>(Number(String(i.value).replace(",","."))||0)!==(parOf(p.id,r.id)||0));if(chg.length){if(!S.parsOk)throw new Error("Stocks de base non chargés : réessayez");await rpc("admin_set_par",{p_pin:S.adminPin,p_rows:chg.map(([r,i])=>({resto_id:r.id,product_id:id,par:Number(String(i.value).replace(",","."))||0}))})}await loadPars();await loadBase();s.close();toast("✓ "+t("saved"),"ok");refresh()}catch(err){e.currentTarget.disabled=false;toast(/unique/.test(errMsg(err))?"Ce code-barres est déjà utilisé":errMsg(err),"bad")}}},t("save")))));
 }
 function labelsSheet(){
   const noEan=S.products.filter(p=>p.active&&!p.ean);
@@ -1426,7 +1432,7 @@ function labelsSheet(){
 }
 VIEWS.a_reassort=needAdmin(async function(){
   mount(h("h1",{},"Réassort"),h("div",{class:"empty"},"…"),adminNav("a_reassort"));
-  let list;try{list=await rpc("admin_reassort",{p_pin:S.adminPin})}catch(e){return}
+  let list;try{list=await rpc("admin_reassort",{p_pin:S.adminPin})}catch(e){toast(errMsg(e),"bad");return}
   if(S.view!=="a_reassort")return;
   const byCat={};for(const r of list)(byCat[r.cat]=byCat[r.cat]||[]).push(r);
   mount(h("div",{class:"row",style:"margin-bottom:6px;flex-wrap:wrap"},h("h1",{style:"margin:0"},"Réassort"),h("span",{class:"sp"}),
@@ -1469,7 +1475,8 @@ VIEWS.a_invoices=needAdmin(async function(){
   S.invResto=S.invResto||"all";S.invMonth=S.invMonth||zurichToday().slice(0,7);
   const[y,m]=S.invMonth.split("-").map(Number);const next=m===12?`${y+1}-01`:`${y}-${String(m+1).padStart(2,"0")}`;
   let q=sb.from("invoices").select("*").gte("created_at",zts(S.invMonth+"-01")).lt("created_at",zts(next+"-01")).order("id",{ascending:false});if(S.invResto!=="all")q=q.eq("resto_id",S.invResto);
-  const{data}=await q;if(S.view!=="a_invoices")return;
+  const{data,error:qe}=await q;if(S.view!=="a_invoices")return;
+  if(qe)return mount(h("h1",{},"Factures"),h("div",{class:"empty"},h("div",{class:"e"},"📡"),errMsg(qe),h("br"),h("button",{class:"btn acc",style:"margin-top:12px",onclick:()=>refresh()},t("retry"))),adminNav("a_invoices"));
   const tot=(data||[]).reduce((a,i)=>a+num(i.total_ttc),0);
   const st={};try{const ids=(data||[]).filter(i=>i.email_req).map(i=>i.id);if(ids.length)for(const r of await rpc("invoice_mail_status",{p_pin:S.adminPin,p_ids:ids}))st[r.id]=r}catch(e){}
   const mailPill=i=>{const r=st[i.id];if(!i.emailed_at)return h("span",{class:"pill"},"✉️ non envoyée");if(r&&(r.error||r.status>=300))return h("span",{class:"pill bad",title:r.error||""},"⚠️ échec");return h("span",{class:"pill ok",title:i.email_to||""},"✉️ envoyée")};
@@ -1628,8 +1635,8 @@ function drawSwissQR(doc,co,amount,debtor,msg,seed){const ref=isQRIban(co.iban)?
 }
 async function invoicePDF(id){
   const{data:inv,error}=await sb.from("invoices").select("*").eq("id",id).single();if(error)throw error;
-  let order=null,olines=[];if(inv.order_id){const{data}=await sb.from("orders").select("*,order_lines(*)").eq("id",inv.order_id).single();order=data;olines=(data?.order_lines||[]).sort((a,b)=>a.id-b.id)}
-  let refNum="";if(inv.ref_invoice){const{data}=await sb.from("invoices").select("number").eq("id",inv.ref_invoice).single();refNum=data?.number||""}
+  let order=null,olines=[];if(inv.order_id){const{data,error:oe}=await sb.from("orders").select("*,order_lines(*)").eq("id",inv.order_id).single();if(oe)throw oe;order=data;olines=(data?.order_lines||[]).sort((a,b)=>a.id-b.id)}
+  let refNum="";if(inv.ref_invoice){const{data,error:re}=await sb.from("invoices").select("number").eq("id",inv.ref_invoice).single();if(re)throw re;refNum=data?.number||""}
   const co=S.company,rs=R(inv.resto_id),credit=inv.kind==="credit";
   const{jsPDF}=window.jspdf;const doc=new jsPDF({unit:"mm",format:"a4"});
   const OR=[242,140,40],INK=[23,20,15],MU=[130,124,116];
@@ -1796,7 +1803,7 @@ async function shareInvoice(id){
 /* ---------- Démarrage ---------- */
 async function start(){
   if(!S.mode)return go("setup");
-  if(S.mode==="resto"){if(!R(S.resto).id)return resetMode();
+  if(S.mode==="resto"){if(S.restos.length&&!R(S.resto).id)return resetMode();
     const c=LS.get("sugg_"+S.resto,null);if(c){S.sugg=c.sugg||{};S.usual=c.usual||{};S.last=c.last||null}S.auto=LS.get("auto_"+S.resto,null);
     startRealtime();startReminder();go("r_order");
     Promise.all([loadSuggestions().catch(()=>{}),loadPars(),loadAuto(),loadOnWay()]).then(()=>{for(const o of S.onway)onwaySeen.add(o.id);if(S.view==="r_order"&&document.activeElement?.tagName!=="INPUT"&&!document.querySelector(".sheet"))refresh()});return}
