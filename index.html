@@ -670,7 +670,7 @@ async function mailInvoice(id,force){
   catch(e){if(!isNetErr(e))toast("✉️ "+errMsg(e),"bad");return null}}
 let mailBusy=false;
 async function mailPending(){if(mailBusy||!navigator.onLine||(S.invMail&&S.invMail.enabled===false))return;mailBusy=true;
-  try{const since=new Date(Date.now()-3*864e5).toISOString();const{data}=await sb.from("invoices").select("id").is("emailed_at",null).gte("created_at",since).order("id").limit(10);
+  try{const since=new Date(Date.now()-35*864e5).toISOString();const{data}=await sb.from("invoices").select("id").is("emailed_at",null).gte("created_at",since).order("id").limit(10);
     for(const r of data||[])await mailInvoice(r.id)}catch(e){}finally{mailBusy=false}}
 /* Excel (SheetJS, chargé à la demande) */
 let xlsxP=null;
@@ -712,7 +712,7 @@ async function exportMonthXLSX(month){try{const X=await loadXLSX();if(!Object.ke
   const[y,m]=month.split("-").map(Number);const next=m===12?`${y+1}-01`:`${y}-${String(m+1).padStart(2,"0")}`;const from=zts(month+"-01"),to=zts(next+"-01");
   const all=async q=>{let out=[];for(let i=0;;i+=1000){const{data,error}=await q().range(i,i+999);if(error)throw error;out=out.concat(data);if(data.length<1000)break}return out};
   const invs=await all(()=>sb.from("invoices").select("*").gte("created_at",from).lt("created_at",to).order("id"));
-  const moves=await all(()=>sb.from("stock_moves").select("*").gte("created_at",from).lt("created_at",to).order("id"));
+  const moves=await all(()=>sb.from("stock_moves").select("*").gte("acted_at",from).lt("acted_at",to).order("acted_at").order("id"));
   const d=x=>new Intl.DateTimeFormat("fr-CH",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}).format(new Date(x));
   const K={in:"Entrée",out:"Livraison",loss:"Perte",inventory:"Inventaire",credit:"Retour (avoir)"};
   const r2=v=>Math.round(num(v)*100)/100;
@@ -720,7 +720,7 @@ async function exportMonthXLSX(month){try{const X=await loadXLSX();if(!Object.ke
   X.utils.book_append_sheet(wb,sheetOf(X,invs.map(i=>({"N°":i.number,"Type":i.kind==="credit"?"Avoir":"Facture","Date":d(i.created_at),"Restaurant":R(i.resto_id).name,"Total HT":r2(i.total_ht),"TVA":r2(i.total_vat),"Total TTC":r2(i.total_ttc),"Remarque":i.note||"","Envoyée à":i.email_to||""})),[15,9,17,18,12,10,12,40,40]),"Factures");
   const lines=[];for(const i of invs)for(const l of i.lines||[]){const sg=i.kind==="credit"?-1:1;lines.push({"N°":i.number,"Date":d(i.created_at),"Restaurant":R(i.resto_id).name,"Produit":l.name,"Conditionnement":l.unit,"Commandé":l.ordered!=null?num(l.ordered):"","Quantité":sg*num(l.qty),"Prix HT":r2(l.price),"TVA %":num(l.vat),"Total HT":r2(sg*num(l.qty)*num(l.price)),"Prix achat":S.costs[l.product_id]||0,"Marge":r2(sg*num(l.qty)*(num(l.price)-(S.costs[l.product_id]||0)))})}
   X.utils.book_append_sheet(wb,sheetOf(X,lines,[15,17,18,40,24,10,10,10,7,12,11,11]),"Lignes");
-  X.utils.book_append_sheet(wb,sheetOf(X,moves.map(mv=>({"Date":d(mv.created_at),"Produit":(P(mv.product_id)||{name:mv.product_id}).name,"Type":K[mv.kind]||mv.kind,"Quantité":num(mv.qty),"Raison":mv.reason||"","Référence":mv.ref||"","Par":mv.by_name||""})),[17,40,14,10,24,16,14]),"Mouvements de stock");
+  X.utils.book_append_sheet(wb,sheetOf(X,moves.map(mv=>({"Date":d(mv.acted_at||mv.created_at),"Produit":(P(mv.product_id)||{name:mv.product_id}).name,"Type":K[mv.kind]||mv.kind,"Quantité":num(mv.qty),"Raison":mv.reason||"","Référence":mv.ref||"","Par":mv.by_name||""})),[17,40,14,10,24,16,14]),"Mouvements de stock");
   X.utils.book_append_sheet(wb,sheetOf(X,S.products.filter(p=>p.active).map(p=>({"Catégorie":catLabel(p.cat),"Produit":p.name,"Conditionnement":p.unit,"Emplacement":p.location||"","Stock":num(p.stock),"Stock minimum":num(p.min_stock),"Prix achat HT":S.costs[p.id]||0,"Valeur du stock":r2(Math.max(num(p.stock),0)*(S.costs[p.id]||0)),"Prix vente HT":num(p.price)})),[18,40,24,12,9,13,13,14,13]),"Stock actuel");
   X.writeFile(wb,"chic-distribution-"+month+".xlsx")}catch(e){toast(errMsg(e),"bad")}}
 /* Lien avec Kitchen Chic Chicken (pertes en cuisine) */
@@ -748,7 +748,7 @@ async function call(fn,args,label){if(!navigator.onLine){enqueue(fn,args,label);
 let flushing=false;
 async function flush(){if(flushing||!OUT.length||!navigator.onLine)return;flushing=true;let sent=0;
   try{while(OUT.length){const it=OUT[0];
-      if(it.args&&it.args.p_pin!==undefined&&/^depot_/.test(it.fn)&&S.depotPin)it.args.p_pin=S.depotPin;
+      if(it.args&&it.args.p_pin!==undefined&&/^depot_/.test(it.fn)&&S.depotPin)it.args.p_pin=S.depotPin;if(it.fn==="depot_inventory"&&it.args)it.args.p_now=new Date().toISOString();
       try{const d=await rpcRaw(it.fn,it.args);sent++;if(it.fn==="depot_deliver"&&d&&d.invoice)setTimeout(()=>mailInvoice(d.invoice),500)}
       catch(e){if(e&&e.code==="28000"){pinLost();break}
         if(!isBizErr(e)){it.tries=(it.tries||0)+1;if(it.tries%10===0&&OUT.length>1){OUT.push(OUT.shift());toast(t("sync_fail")+" · "+(it.label||"")+" : "+errMsg(e),"bad")}LS.set("outbox",OUT);break}
@@ -1257,9 +1257,9 @@ async function productSheet(p){
       return h("button",{class:"lr",style:"width:100%;text-align:left",onclick:()=>{s.close();lotSheet(p,l)}},h("div",{class:"sp"},h("div",{class:"nm"},(l.expiry?t("dlc")+" "+dfmt(l.expiry,{day:"numeric",month:"short",year:"numeric"}):"—")+(l.lot?" · "+t("lot")+" "+l.lot:"")),h("div",{class:"un"},dfmt(l.received_at,{day:"numeric",month:"short"})+(l.supplier?" · "+l.supplier:""))),
         d!=null&&d<=3?h("span",{class:"pill "+(d<0?"bad":"acc")},d<0?t("expired"):t("dlc_soon")):null,h("b",{style:"margin-left:8px"},qfmt(l.qty)))}):h("div",{class:"lr muted small"},t("no_lots"))),
     h("div",{class:"b",style:"margin-bottom:6px"},t("history")),h("div",{class:"card",style:"padding:4px 14px"},hist)));
-  const{data}=await sb.from("stock_moves").select("*").eq("product_id",p.id).order("created_at",{ascending:false}).limit(25);
+  const{data}=await sb.from("stock_moves").select("*").eq("product_id",p.id).order("acted_at",{ascending:false}).order("id",{ascending:false}).limit(25);
   const K={in:["⬇️",t("stock_in")],out:["🚚",t("delivered")],loss:["🗑️",t("losses")],inventory:["📋",t("inventory")],credit:["↩️",t("credit_k")]};
-  hist.replaceChildren(...(data||[]).length?data.map(m=>h("div",{class:"lr"},h("span",{style:"font-size:20px"},K[m.kind][0]),h("div",{class:"sp"},h("div",{class:"b",style:"font-size:14px"},K[m.kind][1]+(m.ref?" · "+m.ref:"")+(m.reason?" · "+m.reason:"")),h("div",{class:"un"},dfmt(m.created_at,{day:"numeric",month:"short"})+" "+tfmt(m.created_at)+(m.by_name?" · "+m.by_name:""))),h("b",{style:num(m.qty)<0?"color:var(--bad)":"color:var(--ok)"},(num(m.qty)>0?"+":"")+qfmt(m.qty)))):[h("div",{class:"lr"},"—")]);
+  hist.replaceChildren(...(data||[]).length?data.map(m=>h("div",{class:"lr"},h("span",{style:"font-size:20px"},K[m.kind][0]),h("div",{class:"sp"},h("div",{class:"b",style:"font-size:14px"},K[m.kind][1]+(m.ref?" · "+m.ref:"")+(m.reason?" · "+m.reason:"")),h("div",{class:"un"},dfmt((m.acted_at||m.created_at),{day:"numeric",month:"short"})+" "+tfmt((m.acted_at||m.created_at))+(m.by_name?" · "+m.by_name:""))),h("b",{style:num(m.qty)<0?"color:var(--bad)":"color:var(--ok)"},(num(m.qty)>0?"+":"")+qfmt(m.qty)))):[h("div",{class:"lr"},"—")]);
 }
 function moveSheet(p,kind){
   const reasons=[["r_expired"],["r_damaged"],["r_broken"],["r_other"]];
@@ -1278,24 +1278,24 @@ function moveView(kind){
   return async function(){
     const isIn=kind==="in";
     S.onScan=code=>{const p=resolveCode(code);if(!p)return unknownCode(code);buzz(true);stopScanner();moveSheet(p,kind);return{silent:true}};
-    const{data}=await sb.from("stock_moves").select("*").eq("kind",kind).order("created_at",{ascending:false}).limit(30);
+    const{data}=await sb.from("stock_moves").select("*").eq("kind",kind).order("acted_at",{ascending:false}).order("id",{ascending:false}).limit(30);
     if(S.view!==(isIn?"d_in":"d_loss"))return;
     mount(topBar(isIn?t("stock_in"):t("losses"),"Chic Distribution",null),
       h("div",{class:"two"},h("button",{class:"banner",style:"text-align:left;background:var(--acc);margin:0",onclick:()=>openScanner(isIn?t("stock_in"):t("losses"))},h("div",{class:"ic",style:"background:#fff;color:var(--acc)",html:ICON.scan}),h("div",{},h("b",{},t("scan")),h("small",{style:"color:#fff;opacity:.85"},t("aim")))),
         h("button",{class:"banner",style:"text-align:left;margin:0",onclick:()=>pickProduct(t("choose_product"),null,p=>{setTimeout(()=>moveSheet(p,kind),50)})},h("div",{class:"ic",html:ICON.search}),h("div",{},h("b",{},t("choose_product")),h("small",{},plural(S.products.length,"products_count"))))),
       h("div",{class:"sec"},h("h2",{},t("recent"))),
-      h("div",{class:"card",style:"padding:4px 14px"},(data||[]).length?data.map(m=>{const p=P(m.product_id)||{name:m.product_id};return h("div",{class:"lr"},h("div",{class:"em",style:tint(p.cat)},pimg(p)),h("div",{class:"sp"},h("div",{class:"nm"},p.name),h("div",{class:"un"},dfmt(m.created_at,{day:"numeric",month:"short"})+" "+tfmt(m.created_at)+(m.reason?" · "+m.reason:"")+(m.by_name?" · "+m.by_name:""))),h("b",{style:isIn?"color:var(--ok)":"color:var(--bad)"},(isIn?"+":"")+qfmt(m.qty)))}):h("div",{class:"lr muted"},"—")),
+      h("div",{class:"card",style:"padding:4px 14px"},(data||[]).length?data.map(m=>{const p=P(m.product_id)||{name:m.product_id};return h("div",{class:"lr"},h("div",{class:"em",style:tint(p.cat)},pimg(p)),h("div",{class:"sp"},h("div",{class:"nm"},p.name),h("div",{class:"un"},dfmt((m.acted_at||m.created_at),{day:"numeric",month:"short"})+" "+tfmt((m.acted_at||m.created_at))+(m.reason?" · "+m.reason:"")+(m.by_name?" · "+m.by_name:""))),h("b",{style:isIn?"color:var(--ok)":"color:var(--bad)"},(isIn?"+":"")+qfmt(m.qty)))}):h("div",{class:"lr muted"},"—")),
       depotNav(isIn?"d_in":"d_loss",pendingCount||null));
   };
 }
 VIEWS.d_in=moveView("in");VIEWS.d_loss=moveView("loss");
 VIEWS.d_inv=function(){
   S.invCounts=S.invCounts||{};const C=S.invCounts;const CA=S.invAt=S.invAt||{};
-  S.onScan=code=>{const p=resolveCode(code);if(!p)return unknownCode(code);buzz(true);stopScanner();qtySheet(p.name,p.unit+" · "+t("in_stock")+" "+qfmt(p.stock),C[p.id]??"",n=>{C[p.id]=n;CA[p.id]=new Date().toISOString();refresh()});return{silent:true}};
+  S.onScan=code=>{const p=resolveCode(code);if(!p)return unknownCode(code);buzz(true);stopScanner();qtySheet(p.name,p.unit+" · "+t("in_stock")+" "+qfmt(p.stock),C[p.id]??"",n=>{C[p.id]=n;CA[p.id]=CA[p.id]||new Date().toISOString();refresh()});return{silent:true}};
   const inp=h("input",{placeholder:t("search"),value:S.q,oninput:e=>{S.q=e.target.value;draw()}});const box=h("div",{class:"list"});
   function draw(){const q=S.q.trim().toLowerCase();const it=S.products.filter(p=>p.active&&fmatch(p,q)&&(!S.invLoc||p.location===S.invLoc));const byCat={};for(const p of it)(byCat[p.cat]=byCat[p.cat]||[]).push(p);
     box.replaceChildren(...S.cats.filter(c=>byCat[c.id]).map(c=>h("div",{class:"card",style:"padding:6px 14px"},h("div",{class:"b cath","data-cat":c.id,style:"padding:10px 0 6px"},c.label),byCat[c.id].map(p=>{
-      const i=h("input",{type:"number",inputmode:"decimal",step:"any",min:"0",placeholder:qfmt(p.stock),value:C[p.id]??"",style:"width:92px;text-align:center;border:1.5px solid var(--line);border-radius:12px;padding:10px;font-weight:800;font-size:16px;background:"+(C[p.id]!=null?"var(--acc-s)":"#fff"),oninput:e=>{const v=e.target.value;if(v==="")delete C[p.id];else{C[p.id]=Number(v.replace(",","."));CA[p.id]=new Date().toISOString()}e.target.style.background=v===""?"#fff":"var(--acc-s)";cnt.textContent=Object.keys(C).length}});
+      const i=h("input",{type:"number",inputmode:"decimal",step:"any",min:"0",placeholder:qfmt(p.stock),value:C[p.id]??"",style:"width:92px;text-align:center;border:1.5px solid var(--line);border-radius:12px;padding:10px;font-weight:800;font-size:16px;background:"+(C[p.id]!=null?"var(--acc-s)":"#fff"),oninput:e=>{const v=e.target.value;if(v===""){delete C[p.id];delete CA[p.id]}else{C[p.id]=Number(v.replace(",","."));CA[p.id]=CA[p.id]||new Date().toISOString()}e.target.style.background=v===""?"#fff":"var(--acc-s)";cnt.textContent=Object.keys(C).length}});
       return h("div",{class:"lr"},h("div",{class:"sp"},h("div",{class:"nm"},p.name),h("div",{class:"un"},p.unit+" · "+t("in_stock")+" "+qfmt(p.stock))),i)}))))}
   draw();const cnt=h("span",{},Object.keys(C).length);
   mount(topBar(t("inventory"),"Chic Distribution",h("button",{class:"icbtn",onclick:()=>openScanner(t("inventory"))},ic("scan"))),
@@ -1304,7 +1304,7 @@ VIEWS.d_inv=function(){
     h("div",{class:"search"},h("span",{class:"sic",html:ICON.search}),inp),box,
     h("div",{style:"height:70px"}),
     h("div",{class:"sticky",style:"bottom:calc(env(safe-area-inset-bottom) + 92px)"},h("button",{class:"btn acc",onclick:async e=>{const counts=Object.entries(C).map(([product_id,qty])=>({product_id,qty,at:CA[product_id]||new Date().toISOString()}));if(!counts.length)return;e.target.disabled=true;
-      try{const n=await call("depot_inventory",{p_pin:S.depotPin||S.adminPin,p_counts:counts,p_by:S.who,p_at:new Date().toISOString()},t("inventory"));S.invCounts={};S.invAt={};
+      try{const n=await call("depot_inventory",{p_pin:S.depotPin||S.adminPin,p_counts:counts,p_by:S.who,p_at:new Date().toISOString(),p_now:new Date().toISOString()},t("inventory"));S.invCounts={};S.invAt={};
         if(n&&n.queued){for(const c of counts){const p=P(c.product_id);if(p)p.stock=c.qty}toast(t("queued"),"ok")}else{await loadBase();toast("✓ "+n+" "+t("changed"),"ok")}refresh()}catch(err){e.target.disabled=false;toast(errMsg(err),"bad")}}},t("validate_inv"),h("span",{},"(",cnt,")"))),
     depotNav("d_inv",pendingCount||null));
 };
@@ -1324,7 +1324,7 @@ VIEWS.a_stats=needAdmin(async function(){
   const[from,to]=periodRange(S.period);
   const qi=()=>{let q=sb.from("invoices").select("*").gte("created_at",zts(from));if(to)q=q.lt("created_at",zts(to));return q.order("id")};
   const ql=()=>{let q=sb.from("order_lines").select("id,product_id,name,qty_ordered,qty_delivered,orders!inner(created_at,resto_id,status)").gte("orders.created_at",zts(from));if(to)q=q.lt("orders.created_at",zts(to));return q.order("id")};
-  const qm=()=>{let q=sb.from("stock_moves").select("*").eq("kind","loss").gte("created_at",zts(from));if(to)q=q.lt("created_at",zts(to));return q.order("id")};
+  const qm=()=>{let q=sb.from("stock_moves").select("*").eq("kind","loss").gte("acted_at",zts(from));if(to)q=q.lt("acted_at",zts(to));return q.order("id")};
   const yStart=zurichToday().slice(0,4)-1+zurichToday().slice(4,7)+"-01";
   const[inv,ol,ls,yr,sv]=await Promise.all([allRows(qi),allRows(ql),allRows(qm),allRows(()=>sb.from("invoices").select("id,created_at,total_ht,resto_id").gte("created_at",zts(yStart)).order("id")),rpc("admin_stock_value",{p_pin:S.adminPin})]);
   if(S.view!=="a_stats")return;
@@ -1487,7 +1487,7 @@ function creditSheet(inv){
     h("div",{class:"card",style:"padding:4px 14px;margin-bottom:12px"},inv.lines.map(l=>{const i=h("input",{type:"number",inputmode:"decimal",step:"any",min:"0",max:l.qty,placeholder:"0",style:"width:84px;text-align:center;border:1.5px solid var(--line);border-radius:12px;padding:10px;font-weight:800;font-size:16px",oninput:e=>{C[l.product_id]=Number(e.target.value)||0}});
       return h("div",{class:"lr"},h("div",{class:"sp"},h("div",{class:"nm"},l.name),h("div",{class:"un"},"Livré "+qfmt(l.qty)+" · "+chf(l.price))),i)})),
     h("div",{class:"fld"},h("label",{},"Raison"),reason),
-    h("div",{class:"tgl",onclick:()=>{restock=!restock;sw.classList.toggle("on",restock);sw.style.background=restock?"var(--ok)":""}},h("div",{class:"sp"},h("div",{class:"b"},"Remettre en stock"),h("div",{class:"un muted small"},"Si la marchandise revient au dépôt")),sw),
+    h("div",{class:"tgl",onclick:()=>{restock=!restock;sw.classList.toggle("on",restock);sw.style.background=restock?"var(--ok)":""}},h("div",{class:"sp"},h("div",{class:"b"},"Remettre en stock"),h("div",{class:"un muted small"},"Si la marchandise revient au dépôt — pas si elle a déjà été comptée dans un inventaire")),sw),
     h("div",{class:"row"},h("button",{class:"btn light",style:"flex:1",onclick:()=>s.close()},t("cancel")),h("button",{class:"btn bad",style:"flex:1.4",onclick:async e=>{
       const lines=Object.entries(C).filter(([,q])=>q>0).map(([product_id,qty])=>({product_id,qty,reason:reason.value.trim()}));if(!lines.length)return toast("Indiquez une quantité","bad");e.target.disabled=true;
       try{const r=await rpc("admin_credit_note",{p_pin:S.adminPin,p_invoice:inv.id,p_lines:lines,p_restock:restock,p_note:reason.value.trim()?"Avoir sur "+inv.number+" · "+reason.value.trim():""});s.close();if(restock)await loadBase();toast("✓ Avoir "+r.number,"ok");refresh();mailInvoice(r.invoice)}catch(err){e.target.disabled=false;toast(errMsg(err),"bad")}}},"Créer l'avoir"))));
