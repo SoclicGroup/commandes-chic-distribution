@@ -742,7 +742,7 @@ const uuid=()=>(window.crypto&&crypto.randomUUID?crypto.randomUUID():Date.now().
 const isNetErr=e=>!navigator.onLine||!!(e&&!e.code&&/fetch|network|load failed|timeout|abort/i.test(e.message||String(e)));
 /* Erreur « métier » définitive (refus explicite du serveur) : la seule qui retire un élément de la file */
 const isBizErr=e=>!!(e&&e.code&&(e.code==="P0001"||/^2[23]/.test(e.code)));
-function enqueue(fn,args,label){if(["depot_inventory","place_order","depot_deliver","depot_move"].includes(fn)&&args&&!args.p_at)args={...args,p_at:new Date().toISOString()};OUT.push({id:uuid(),fn,args,label,at:Date.now()});LS.set("outbox",OUT);netBadge()}
+function enqueue(fn,args,label){if(["depot_inventory","place_order","depot_deliver","depot_move","depot_arrive"].includes(fn)&&args&&!args.p_at)args={...args,p_at:new Date().toISOString()};OUT.push({id:uuid(),fn,args,label,at:Date.now()});LS.set("outbox",OUT);netBadge()}
 async function call(fn,args,label){if(!navigator.onLine){enqueue(fn,args,label);return{queued:true}}
   try{return await rpc(fn,args)}catch(e){if(isNetErr(e)){enqueue(fn,args,label);return{queued:true}}throw e}}
 let flushing=false;
@@ -817,7 +817,7 @@ function startRealtime(){if(rtStarted)return;rtStarted=true;
     if(!document.querySelector(".sheet")&&document.activeElement?.tagName!=="INPUT"&&document.activeElement?.tagName!=="TEXTAREA")refresh();
   }).on("postgres_changes",{event:"UPDATE",schema:"public",table:"products"},payload=>{
     const i=S.products.findIndex(x=>x.id===payload.new.id);const pv=i>=0?S.products[i].photo_v:null;if(i>=0)S.products[i]={...S.products[i],...payload.new};if(pv!==payload.new.photo_v)loadPhotos();
-    if(S.view==="d_stock"||(S.mode==="resto"&&(S.view==="r_order"||S.view==="r_cart")&&document.activeElement?.tagName!=="INPUT"))refresh();
+    if(S.view==="d_stock"||(S.mode==="resto"&&(S.view==="r_order"||S.view==="r_cart")&&!["INPUT","TEXTAREA"].includes(document.activeElement?.tagName)))refresh();
   }).subscribe();
 }
 
@@ -1290,12 +1290,12 @@ function moveView(kind){
 }
 VIEWS.d_in=moveView("in");VIEWS.d_loss=moveView("loss");
 VIEWS.d_inv=function(){
-  S.invCounts=S.invCounts||{};const C=S.invCounts;
-  S.onScan=code=>{const p=resolveCode(code);if(!p)return unknownCode(code);buzz(true);stopScanner();qtySheet(p.name,p.unit+" · "+t("in_stock")+" "+qfmt(p.stock),C[p.id]??"",n=>{C[p.id]=n;refresh()});return{silent:true}};
+  S.invCounts=S.invCounts||{};const C=S.invCounts;const CA=S.invAt=S.invAt||{};
+  S.onScan=code=>{const p=resolveCode(code);if(!p)return unknownCode(code);buzz(true);stopScanner();qtySheet(p.name,p.unit+" · "+t("in_stock")+" "+qfmt(p.stock),C[p.id]??"",n=>{C[p.id]=n;CA[p.id]=new Date().toISOString();refresh()});return{silent:true}};
   const inp=h("input",{placeholder:t("search"),value:S.q,oninput:e=>{S.q=e.target.value;draw()}});const box=h("div",{class:"list"});
   function draw(){const q=S.q.trim().toLowerCase();const it=S.products.filter(p=>p.active&&fmatch(p,q)&&(!S.invLoc||p.location===S.invLoc));const byCat={};for(const p of it)(byCat[p.cat]=byCat[p.cat]||[]).push(p);
     box.replaceChildren(...S.cats.filter(c=>byCat[c.id]).map(c=>h("div",{class:"card",style:"padding:6px 14px"},h("div",{class:"b cath","data-cat":c.id,style:"padding:10px 0 6px"},c.label),byCat[c.id].map(p=>{
-      const i=h("input",{type:"number",inputmode:"decimal",step:"any",min:"0",placeholder:qfmt(p.stock),value:C[p.id]??"",style:"width:92px;text-align:center;border:1.5px solid var(--line);border-radius:12px;padding:10px;font-weight:800;font-size:16px;background:"+(C[p.id]!=null?"var(--acc-s)":"#fff"),oninput:e=>{const v=e.target.value;if(v==="")delete C[p.id];else C[p.id]=Number(v.replace(",","."));e.target.style.background=v===""?"#fff":"var(--acc-s)";cnt.textContent=Object.keys(C).length}});
+      const i=h("input",{type:"number",inputmode:"decimal",step:"any",min:"0",placeholder:qfmt(p.stock),value:C[p.id]??"",style:"width:92px;text-align:center;border:1.5px solid var(--line);border-radius:12px;padding:10px;font-weight:800;font-size:16px;background:"+(C[p.id]!=null?"var(--acc-s)":"#fff"),oninput:e=>{const v=e.target.value;if(v==="")delete C[p.id];else{C[p.id]=Number(v.replace(",","."));CA[p.id]=new Date().toISOString()}e.target.style.background=v===""?"#fff":"var(--acc-s)";cnt.textContent=Object.keys(C).length}});
       return h("div",{class:"lr"},h("div",{class:"sp"},h("div",{class:"nm"},p.name),h("div",{class:"un"},p.unit+" · "+t("in_stock")+" "+qfmt(p.stock))),i)}))))}
   draw();const cnt=h("span",{},Object.keys(C).length);
   mount(topBar(t("inventory"),"Chic Distribution",h("button",{class:"icbtn",onclick:()=>openScanner(t("inventory"))},ic("scan"))),
@@ -1303,8 +1303,8 @@ VIEWS.d_inv=function(){
     S.invLoc?h("div",{class:"row",style:"margin-bottom:12px"},h("span",{class:"pill loc big"},"📍 "+S.invLoc),h("button",{class:"btn light sm",onclick:()=>{S.invLoc=null;refresh()}},"✕ "+t("all"))):null,
     h("div",{class:"search"},h("span",{class:"sic",html:ICON.search}),inp),box,
     h("div",{style:"height:70px"}),
-    h("div",{class:"sticky",style:"bottom:calc(env(safe-area-inset-bottom) + 92px)"},h("button",{class:"btn acc",onclick:async e=>{const counts=Object.entries(C).map(([product_id,qty])=>({product_id,qty}));if(!counts.length)return;e.target.disabled=true;
-      try{const n=await call("depot_inventory",{p_pin:S.depotPin||S.adminPin,p_counts:counts,p_by:S.who,p_at:new Date().toISOString()},t("inventory"));S.invCounts={};
+    h("div",{class:"sticky",style:"bottom:calc(env(safe-area-inset-bottom) + 92px)"},h("button",{class:"btn acc",onclick:async e=>{const counts=Object.entries(C).map(([product_id,qty])=>({product_id,qty,at:CA[product_id]||new Date().toISOString()}));if(!counts.length)return;e.target.disabled=true;
+      try{const n=await call("depot_inventory",{p_pin:S.depotPin||S.adminPin,p_counts:counts,p_by:S.who,p_at:new Date().toISOString()},t("inventory"));S.invCounts={};S.invAt={};
         if(n&&n.queued){for(const c of counts){const p=P(c.product_id);if(p)p.stock=c.qty}toast(t("queued"),"ok")}else{await loadBase();toast("✓ "+n+" "+t("changed"),"ok")}refresh()}catch(err){e.target.disabled=false;toast(errMsg(err),"bad")}}},t("validate_inv"),h("span",{},"(",cnt,")"))),
     depotNav("d_inv",pendingCount||null));
 };

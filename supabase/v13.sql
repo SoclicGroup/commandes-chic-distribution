@@ -1,7 +1,8 @@
 -- v13 : corrections de la revue QA n°3
 -- Heure réelle des mouvements (actions faites hors ligne puis synchronisées)
-alter table stock_moves add column if not exists acted_at timestamptz default now();
+alter table stock_moves add column if not exists acted_at timestamptz;
 update stock_moves set acted_at=created_at where acted_at is null;
+alter table stock_moves alter column acted_at set default now();
 create or replace function _acted(p_at timestamptz) returns timestamptz language sql stable set search_path=public as $$
   select case when p_at is not null and p_at between now() - interval '7 days' and now() + interval '10 minutes' then least(p_at,now()) else now() end $$;
 
