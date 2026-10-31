@@ -143,7 +143,7 @@ grant execute on function depot_move(text, text, text, numeric, text, text, text
 
 create or replace function admin_import_products(p_pin text, p_rows jsonb) returns jsonb
 language plpgsql security definer set search_path=public as $$
-declare r jsonb; pid text; isnew boolean; cur products; created int:=0; updated int:=0; stockfix int:=0; errs jsonb:='[]'; ids jsonb:='[]'; cat text; v_ean text; n int:=0; mid bigint; v_c text;
+declare r jsonb; pid text; isnew boolean; cur products; created int:=0; updated int:=0; stockfix int:=0; errs jsonb:='[]'; ids jsonb:='[]'; cat text; v_ean text; n int:=0; mid bigint; v_c text; cands text[]; touched text[] := '{}';
 begin perform _need('admin',p_pin);
   for r in select * from jsonb_array_elements(p_rows) loop
     n := n+1;
@@ -153,7 +153,15 @@ begin perform _need('admin',p_pin);
       v_c := cat;
       pid := nullif(trim(coalesce(r->>'id','')),'');
       -- ligne sans ID : un produit du même nom existe déjà (réimport) -> on le met à jour au lieu de le recréer
-      if pid is null then select id into pid from products where lower(trim(name))=lower(trim(r->>'name')) and (v_c='' or products.cat=v_c) order by active desc, id limit 1; end if;
+      -- ligne sans ID : on reprend un produit existant seulement s'il n'y en a qu'UN qui correspond exactement
+      -- (même nom, même conditionnement s'il est donné, même catégorie si elle est donnée, actif, pas déjà traité dans ce fichier)
+      if pid is null then
+        select array_agg(id) into cands from products
+          where active and lower(trim(name))=lower(trim(r->>'name')) and (v_c='' or products.cat=v_c)
+            and (coalesce(trim(r->>'unit'),'')='' or lower(trim(products.unit))=lower(trim(r->>'unit')))
+            and not (products.id = any(touched));
+        if array_length(cands,1)=1 then pid := cands[1]; end if;
+      end if;
       select * into cur from products where id=pid;
       isnew := cur.id is null;
       if isnew and cat='' then raise exception 'catégorie inconnue « % »', coalesce(r->>'cat',''); end if;
@@ -174,7 +182,9 @@ begin perform _need('admin',p_pin);
         insert into stock_moves(product_id,kind,qty,reason,by_name) values (pid,'inventory',(r->>'stock')::numeric-coalesce(cur.stock,0),'Import Excel','Admin') returning id into mid;
         update products set stock=(r->>'stock')::numeric where id=pid; perform _reconcile_lots(pid, mid); stockfix := stockfix+1;
       end if;
-      if isnew then created:=created+1; ids := ids || jsonb_build_object('row',coalesce((r->>'_row')::int,n),'id',pid); else updated:=updated+1; end if;
+      touched := touched || pid;
+      ids := ids || jsonb_build_object('row',coalesce((r->>'_row')::int,n),'id',pid,'new',isnew);
+      if isnew then created:=created+1; else updated:=updated+1; end if;
     exception when others then
       errs := errs || jsonb_build_object('row', coalesce((r->>'_row')::int,n), 'name', coalesce(r->>'name',''), 'error', sqlerrm);
     end;
