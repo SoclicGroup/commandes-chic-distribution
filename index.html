@@ -111,7 +111,7 @@ h1{font-size:26px;font-weight:800;letter-spacing:-.02em;margin:0 0 14px}
 .cols .cl{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
 .cols .cl i{display:block;width:100%;max-width:34px;background:var(--acc);border-radius:8px 8px 4px 4px;min-height:2px}
 .cols .cl span{font-size:11px;color:var(--muted);font-weight:600}
-.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}.two>*{min-width:0}.lr .sp{min-width:0}.lr>.pill{flex-shrink:0}
 @media(max-width:820px){.two{grid-template-columns:1fr}}
 /* sheet */
 .ov{position:fixed;inset:0;background:rgba(23,20,15,.38);z-index:50;display:flex;align-items:flex-end;justify-content:center;animation:fi .15s}
@@ -395,7 +395,7 @@ sq:{hello:"Përshëndetje",search:"Kërko një produkt",all:"Të gjitha",usual:"
 const LOCALE={fr:"fr-CH",de:"de-CH",it:"it-CH",en:"en-GB",sq:"sq-AL"};
 
 /* ---------- État ---------- */
-const LS={get(k,d){try{const v=localStorage.getItem("cd_"+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem("cd_"+k,JSON.stringify(v))}catch(e){try{localStorage.removeItem("cd_photos");localStorage.setItem("cd_"+k,JSON.stringify(v))}catch(e2){if(k==="outbox"&&typeof toast==="function")toast("Mémoire de l'appareil pleine : la file hors ligne n'a pas pu être enregistrée","bad")}}},del(k){try{localStorage.removeItem("cd_"+k)}catch(e){}}};
+const LS={get(k,d){try{const v=localStorage.getItem("cd_"+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem("cd_"+k,JSON.stringify(v))}catch(e){try{localStorage.removeItem("cd_photos");localStorage.setItem("cd_"+k,JSON.stringify(v))}catch(e2){if(k==="outbox"&&typeof toast==="function")toast(t("mem_full"),"bad")}}},del(k){try{localStorage.removeItem("cd_"+k)}catch(e){}}};
 const SS={get(k){try{return sessionStorage.getItem("cd_"+k)}catch(e){return null}},set(k,v){try{sessionStorage.setItem("cd_"+k,v)}catch(e){}}};
 const S={mode:LS.get("mode",null),resto:LS.get("resto",null),lang:LS.get("lang","fr"),who:LS.get("who",""),depotPin:LS.get("dpin",""),adminPin:SS.get("apin")||"",
   view:null,cat:"all",q:"",cart:LS.get("cart",{}),products:[],cats:[],restos:[],company:{},orders:[],sugg:{},usual:{},adminTab:"stats",period:"month",costs:{},onScan:null,reminder:{},report:{},last:null,invMail:{},test:{},allPars:LS.get("pars",{}),counts:{},tour:{},autoCfg:{},auto:null,onway:[],stockRules:{},closed:{},announce:{}};
@@ -500,7 +500,8 @@ function unlockAudio(){try{actx=actx||new(window.AudioContext||window.webkitAudi
 ["touchend","click"].forEach(ev=>addEventListener(ev,unlockAudio,{passive:true}));
 document.addEventListener("visibilitychange",()=>{if(!document.hidden){try{actx&&actx.state==="suspended"&&actx.resume()}catch(e){}if(S.mode==="resto")checkReminder();flush()}});
 function beep(f=880,d=.1){try{actx=actx||new(window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),g=actx.createGain();o.frequency.value=f;o.connect(g);g.connect(actx.destination);g.gain.setValueAtTime(.15,actx.currentTime);g.gain.exponentialRampToValueAtTime(.001,actx.currentTime+d);o.start();o.stop(actx.currentTime+d)}catch(e){}}
-function errMsg(e){if(e&&!e.code&&/failed to fetch|networkerror|load failed/i.test(e.message||""))return t("net_err");return (e&&(e.message||e.error_description))||String(e)}
+const SRV_ERR={"Commande vide":"srv_empty","Commande déjà livrée":"srv_done","Quantité invalide":"srv_qty","Prénom obligatoire":"need_name","PIN incorrect":"wrong_pin","Commande introuvable":"srv_nf"};
+function errMsg(e){if(e&&!e.code&&/failed to fetch|networkerror|load failed/i.test(e.message||""))return t("net_err");const m=(e&&(e.message||e.error_description))||String(e);return SRV_ERR[m]?t(SRV_ERR[m]):m}
 /* Lecture complète par pages de 1000 (limite Supabase) */
 async function allRows(mk){let out=[];for(let i=0;i<200000;i+=1000){const{data,error}=await mk().range(i,i+999);if(error)throw error;out=out.concat(data||[]);if(!data||data.length<1000)break}return{data:out}}
 async function rpcRaw(fn,args){const{data,error}=await sb.rpc(fn,args);if(error)throw error;return data}
@@ -621,11 +622,11 @@ function locationsSheet(){const L=allLocs();
     h("button",{class:"btn light w",style:"margin-bottom:10px",onclick:()=>{s.close();slottingSheet()}},"🧭 "+t("slot_title")),
     h("button",{class:"btn acc w",disabled:!L.length,onclick:()=>{s.close();savePDF(locLabelsPDF(L),"etiquettes-emplacements.pdf")}},"🖨️ "+t("loc_labels")+" ("+L.length+")")))}
 /* Rangement conseillé : les produits préparés le plus souvent vont dans les zones rapides */
-Object.assign(T.fr,{net_err:"Pas de connexion internet, réessayez",group_auto:"rempli automatiquement dans chaque commande.",credit_k:"Avoir",over_title:"Plus que commandé",over_sub:"Vous livrez plus que la quantité commandée. Vérifiez avant de facturer.",slot_deliv:"livraisons",slot_title:"Rangement conseillé",slot_sub:"Selon les préparations des 90 derniers jours",slot_fast:"Zones rapides",slot_fast_sub:"Touchez les emplacements proches de la zone de préparation",slot_near:"À rapprocher",slot_near_sub:"Préparés très souvent mais rangés loin",slot_far:"À éloigner",slot_far_sub:"Rarement préparés mais occupent une zone rapide",slot_top:"Les plus préparés",slot_move:"Déplacer",slot_none:"Aucun emplacement",slot_ok:"Le rangement est déjà optimal",slot_nodata:"Pas encore assez de livraisons",slot_picks:"fois"});
-Object.assign(T.en,{net_err:"No internet connection, please try again",group_auto:"filled in automatically in each order.",credit_k:"Credit note",over_title:"More than ordered",over_sub:"You are delivering more than ordered. Check before invoicing.",slot_deliv:"deliveries",slot_title:"Suggested layout",slot_sub:"Based on picks over the last 90 days",slot_fast:"Fast zones",slot_fast_sub:"Tap the locations close to the packing area",slot_near:"Move closer",slot_near_sub:"Picked very often but stored far away",slot_far:"Move away",slot_far_sub:"Rarely picked but using a fast zone",slot_top:"Most picked",slot_move:"Move",slot_none:"No location",slot_ok:"Layout is already optimal",slot_nodata:"Not enough deliveries yet",slot_picks:"times"});
-Object.assign(T.de,{net_err:"Keine Internetverbindung, bitte erneut versuchen",group_auto:"wird in jeder Bestellung automatisch ausgefüllt.",credit_k:"Gutschrift",over_title:"Mehr als bestellt",over_sub:"Sie liefern mehr als bestellt. Bitte vor der Rechnung prüfen.",slot_deliv:"Lieferungen",slot_title:"Empfohlene Lagerung",slot_sub:"Nach Kommissionierungen der letzten 90 Tage",slot_fast:"Schnelle Zonen",slot_fast_sub:"Tippen Sie auf die Plätze nahe der Packzone",slot_near:"Näher lagern",slot_near_sub:"Sehr oft kommissioniert, aber weit weg",slot_far:"Weiter weg lagern",slot_far_sub:"Selten kommissioniert, belegt aber eine schnelle Zone",slot_top:"Am häufigsten",slot_move:"Verschieben",slot_none:"Kein Platz",slot_ok:"Die Lagerung ist bereits optimal",slot_nodata:"Noch nicht genug Lieferungen",slot_picks:"Mal"});
-Object.assign(T.it,{net_err:"Nessuna connessione internet, riprovate",group_auto:"compilato automaticamente in ogni ordine.",credit_k:"Nota di credito",over_title:"Più del richiesto",over_sub:"State consegnando più della quantità ordinata. Verificate prima di fatturare.",slot_deliv:"consegne",slot_title:"Disposizione consigliata",slot_sub:"In base ai prelievi degli ultimi 90 giorni",slot_fast:"Zone rapide",slot_fast_sub:"Tocca le ubicazioni vicine alla zona di preparazione",slot_near:"Da avvicinare",slot_near_sub:"Prelevati spesso ma lontani",slot_far:"Da allontanare",slot_far_sub:"Prelevati raramente ma in zona rapida",slot_top:"I più prelevati",slot_move:"Sposta",slot_none:"Nessuna ubicazione",slot_ok:"La disposizione è già ottimale",slot_nodata:"Non ci sono ancora abbastanza consegne",slot_picks:"volte"});
-Object.assign(T.sq,{net_err:"Nuk ka lidhje interneti, provoni përsëri",group_auto:"plotësohet automatikisht në çdo porosi.",credit_k:"Notë krediti",over_title:"Më shumë se porosia",over_sub:"Po dorëzoni më shumë se sasia e porositur. Kontrolloni para faturimit.",slot_deliv:"dorëzime",slot_title:"Renditja e këshilluar",slot_sub:"Sipas përgatitjeve të 90 ditëve të fundit",slot_fast:"Zonat e shpejta",slot_fast_sub:"Prekni vendet afër zonës së përgatitjes",slot_near:"Për t'u afruar",slot_near_sub:"Përgatiten shpesh por janë larg",slot_far:"Për t'u larguar",slot_far_sub:"Përgatiten rrallë por zënë zonë të shpejtë",slot_top:"Më të përgatiturat",slot_move:"Zhvendos",slot_none:"Pa vend",slot_ok:"Renditja është tashmë optimale",slot_nodata:"Ende jo mjaft dorëzime",slot_picks:"herë"});
+Object.assign(T.fr,{dnote_short:"BL",ex_supplier:"Ex. Prodega, Transgourmet…",mem_full:"Mémoire de l'appareil pleine : la file hors ligne n'a pas pu être enregistrée",no_conn:"Connexion impossible. Vérifiez internet.",srv_empty:"Commande vide : aucun produit disponible",srv_done:"Commande déjà livrée",srv_qty:"Quantité invalide",srv_nf:"Commande introuvable",net_err:"Pas de connexion internet, réessayez",group_auto:"rempli automatiquement dans chaque commande.",credit_k:"Avoir",over_title:"Plus que commandé",over_sub:"Vous livrez plus que la quantité commandée. Vérifiez avant de facturer.",slot_deliv:"livraisons",slot_title:"Rangement conseillé",slot_sub:"Selon les préparations des 90 derniers jours",slot_fast:"Zones rapides",slot_fast_sub:"Touchez les emplacements proches de la zone de préparation",slot_near:"À rapprocher",slot_near_sub:"Préparés très souvent mais rangés loin",slot_far:"À éloigner",slot_far_sub:"Rarement préparés mais occupent une zone rapide",slot_top:"Les plus préparés",slot_move:"Déplacer",slot_none:"Aucun emplacement",slot_ok:"Le rangement est déjà optimal",slot_nodata:"Pas encore assez de livraisons",slot_picks:"fois"});
+Object.assign(T.en,{dnote_short:"Delivery note",ex_supplier:"e.g. Prodega, Transgourmet…",mem_full:"Device storage full: the offline queue could not be saved",no_conn:"No connection. Check the internet.",srv_empty:"Empty order: no product available",srv_done:"Order already delivered",srv_qty:"Invalid quantity",srv_nf:"Order not found",net_err:"No internet connection, please try again",group_auto:"filled in automatically in each order.",credit_k:"Credit note",over_title:"More than ordered",over_sub:"You are delivering more than ordered. Check before invoicing.",slot_deliv:"deliveries",slot_title:"Suggested layout",slot_sub:"Based on picks over the last 90 days",slot_fast:"Fast zones",slot_fast_sub:"Tap the locations close to the packing area",slot_near:"Move closer",slot_near_sub:"Picked very often but stored far away",slot_far:"Move away",slot_far_sub:"Rarely picked but using a fast zone",slot_top:"Most picked",slot_move:"Move",slot_none:"No location",slot_ok:"Layout is already optimal",slot_nodata:"Not enough deliveries yet",slot_picks:"times"});
+Object.assign(T.de,{dnote_short:"Lieferschein",ex_supplier:"z. B. Prodega, Transgourmet…",mem_full:"Gerätespeicher voll: Offline-Warteschlange konnte nicht gespeichert werden",no_conn:"Keine Verbindung. Internet prüfen.",srv_empty:"Leere Bestellung: kein Produkt verfügbar",srv_done:"Bestellung bereits geliefert",srv_qty:"Ungültige Menge",srv_nf:"Bestellung nicht gefunden",net_err:"Keine Internetverbindung, bitte erneut versuchen",group_auto:"wird in jeder Bestellung automatisch ausgefüllt.",credit_k:"Gutschrift",over_title:"Mehr als bestellt",over_sub:"Sie liefern mehr als bestellt. Bitte vor der Rechnung prüfen.",slot_deliv:"Lieferungen",slot_title:"Empfohlene Lagerung",slot_sub:"Nach Kommissionierungen der letzten 90 Tage",slot_fast:"Schnelle Zonen",slot_fast_sub:"Tippen Sie auf die Plätze nahe der Packzone",slot_near:"Näher lagern",slot_near_sub:"Sehr oft kommissioniert, aber weit weg",slot_far:"Weiter weg lagern",slot_far_sub:"Selten kommissioniert, belegt aber eine schnelle Zone",slot_top:"Am häufigsten",slot_move:"Verschieben",slot_none:"Kein Platz",slot_ok:"Die Lagerung ist bereits optimal",slot_nodata:"Noch nicht genug Lieferungen",slot_picks:"Mal"});
+Object.assign(T.it,{dnote_short:"DDT",ex_supplier:"Es. Prodega, Transgourmet…",mem_full:"Memoria del dispositivo piena: la coda offline non è stata salvata",no_conn:"Connessione impossibile. Verificate internet.",srv_empty:"Ordine vuoto: nessun prodotto disponibile",srv_done:"Ordine già consegnato",srv_qty:"Quantità non valida",srv_nf:"Ordine non trovato",net_err:"Nessuna connessione internet, riprovate",group_auto:"compilato automaticamente in ogni ordine.",credit_k:"Nota di credito",over_title:"Più del richiesto",over_sub:"State consegnando più della quantità ordinata. Verificate prima di fatturare.",slot_deliv:"consegne",slot_title:"Disposizione consigliata",slot_sub:"In base ai prelievi degli ultimi 90 giorni",slot_fast:"Zone rapide",slot_fast_sub:"Tocca le ubicazioni vicine alla zona di preparazione",slot_near:"Da avvicinare",slot_near_sub:"Prelevati spesso ma lontani",slot_far:"Da allontanare",slot_far_sub:"Prelevati raramente ma in zona rapida",slot_top:"I più prelevati",slot_move:"Sposta",slot_none:"Nessuna ubicazione",slot_ok:"La disposizione è già ottimale",slot_nodata:"Non ci sono ancora abbastanza consegne",slot_picks:"volte"});
+Object.assign(T.sq,{dnote_short:"Fletëdorëzim",ex_supplier:"P.sh. Prodega, Transgourmet…",mem_full:"Memoria e pajisjes plot: radha jashtë linje nuk u ruajt",no_conn:"Nuk ka lidhje. Kontrolloni internetin.",srv_empty:"Porosi bosh: asnjë produkt i disponueshëm",srv_done:"Porosia është dorëzuar tashmë",srv_qty:"Sasi e pavlefshme",srv_nf:"Porosia nuk u gjet",net_err:"Nuk ka lidhje interneti, provoni përsëri",group_auto:"plotësohet automatikisht në çdo porosi.",credit_k:"Notë krediti",over_title:"Më shumë se porosia",over_sub:"Po dorëzoni më shumë se sasia e porositur. Kontrolloni para faturimit.",slot_deliv:"dorëzime",slot_title:"Renditja e këshilluar",slot_sub:"Sipas përgatitjeve të 90 ditëve të fundit",slot_fast:"Zonat e shpejta",slot_fast_sub:"Prekni vendet afër zonës së përgatitjes",slot_near:"Për t'u afruar",slot_near_sub:"Përgatiten shpesh por janë larg",slot_far:"Për t'u larguar",slot_far_sub:"Përgatiten rrallë por zënë zonë të shpejtë",slot_top:"Më të përgatiturat",slot_move:"Zhvendos",slot_none:"Pa vend",slot_ok:"Renditja është tashmë optimale",slot_nodata:"Ende jo mjaft dorëzime",slot_picks:"herë"});
 async function slotPicks(){const since=new Date(Date.now()-90*864e5).toISOString();
   const{data:os}=await allRows(()=>sb.from("orders").select("id").eq("status","delivered").gte("delivered_at",since).order("id"));
   const ids=(os||[]).map(o=>o.id),ch=[];for(let i=0;i<ids.length;i+=40)ch.push(ids.slice(i,i+40));
@@ -791,11 +792,11 @@ let remTimer=null,remEl=null;
 function startReminder(){clearInterval(remTimer);remTimer=setInterval(checkReminder,60000);setTimeout(checkReminder,3000)}
 function zurichParts(){const f=new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Zurich",weekday:"short",hour:"2-digit",minute:"2-digit",hour12:false}).formatToParts(new Date());const g=k=>(f.find(x=>x.type===k)||{}).value||"";return{wd:g("weekday"),hm:g("hour")+":"+g("minute")}}
 async function checkReminder(){const cfg=S.reminder||{};if(S.mode!=="resto"||cfg.enabled===false||remEl)return;
-  const z=zurichParts();if(z.wd==="Sat"||z.wd==="Sun"||z.hm<(cfg.hour||"17:00"))return;
-  const td=zurichToday();if(LS.get("ordered_"+S.resto,"")===td||Date.now()<LS.get("snooze",0))return;
+  const z=zurichParts();const td=zurichToday();if(isClosed(td)||z.hm<(cfg.hour||"17:00"))return;
+  const nd=nextDelivery();if(LS.get("ordered_"+S.resto,"")===nd||Date.now()<LS.get("snooze",0))return;
   if(OUT.some(x=>x.fn==="place_order"&&x.args.p_resto===S.resto))return;
   if(autoCoversNext())return;
-  try{const{data,error}=await sb.from("orders").select("id").eq("resto_id",S.resto).gte("created_at",zts(td)).limit(1);if(!error&&data&&data.length){LS.set("ordered_"+S.resto,td);return}}catch(e){}
+  try{const{data,error}=await sb.from("orders").select("id").eq("resto_id",S.resto).eq("delivery_date",nd).limit(1);if(!error&&data&&data.length){LS.set("ordered_"+S.resto,nd);return}}catch(e){}
   if(!remEl&&S.mode==="resto")showReminder()}
 function showReminder(){const ring=()=>{beep(988,.15);setTimeout(()=>beep(784,.15),230);setTimeout(()=>beep(988,.22),460)};ring();const iv=setInterval(ring,15000);
   const close=()=>{clearInterval(iv);if(remEl)remEl.remove();remEl=null};
@@ -992,7 +993,7 @@ VIEWS.r_cart=function(){
     try{const all=Object.entries(S.cart).filter(([id])=>P(id));const lines=all.filter(([id])=>!isOut(P(id))).map(([product_id,qty])=>({product_id,qty}));if(!lines.length)throw new Error(t("out_removed"));if(lines.length<all.length)toast(t("out_removed"));
       const ref=LS.get("cartref_"+S.resto,"")||uuid();LS.set("cartref_"+S.resto,ref);
       const r=await call("place_order",{p_resto:S.resto,p_lines:lines,p_urgent:urgent,p_note:note.value.trim(),p_by:who,p_ref:ref,p_at:new Date().toISOString(),p_now:new Date().toISOString()},t("order")+" · "+R(S.resto).name);LS.set("cartref_"+S.resto,"");
-      LS.set("names",[who,...names.filter(x=>x.toLowerCase()!==who.toLowerCase())].slice(0,8));LS.set("ordered_"+S.resto,zurichToday());
+      LS.set("names",[who,...names.filter(x=>x.toLowerCase()!==who.toLowerCase())].slice(0,8));LS.set("ordered_"+S.resto,(r&&r.delivery_date)||nextDelivery());
       S.cart={};S.cm={};LS.set("cart",{});buzz(true);go("r_sent",r&&r.queued?{queued:true,delivery_date:nextDelivery()}:r)}catch(err){btn.disabled=false;toast(errMsg(err),"bad")}}
   const sw=h("div",{class:"sw"+(urgent?" on":"")});
   const body=ids.length?[
@@ -1067,7 +1068,7 @@ VIEWS.d_orders=async function(){
         h("div",{class:"sec"},h("h2",{},"🚚 "+t("tour")),ready.length>1?h("button",{class:"btn acc sm",style:"color:#fff",onclick:e=>depart(ready.map(o=>o.id),e.currentTarget)},t("depart_all")+" ("+ready.length+")"):h("span",{class:"pill ok"},done.length)),
         h("div",{class:"list"},done.map((o,i)=>h("div",{class:"oc",style:"flex-wrap:wrap"},h("div",{class:"ic",style:o.departed_at?"background:var(--blue-s);color:var(--blue)":"background:"+rcol(o.resto_id)[1]+";color:"+rcol(o.resto_id)[0]+";font-weight:700"},o.departed_at?"🚚":String(i+1)),
           h("div",{class:"sp",style:"min-width:150px"},h("div",{class:"t"},R(o.resto_id).name),h("div",{class:"s"},o.number+" · "+tfmt(o.delivered_at)+(o.prepared_by?" · "+o.prepared_by:"")+(o.departed_at?" · "+t("depart")+" "+tfmt(o.departed_at):""))),
-          h("button",{class:"btn ghost sm",onclick:()=>openDeliveryNote(o.id)},"🖨️ BL"),
+          h("button",{class:"btn ghost sm",onclick:()=>openDeliveryNote(o.id)},"🖨️ "+t("dnote_short")),
           o.departed_at?(o.received_at?h("span",{class:"pill ok"},"✓"):h("span",{class:"pill blue"},"🚚 "+t("st_departed"))):h("button",{class:"btn sm",onclick:e=>depart([o.id],e.currentTarget)},"🚚 "+t("depart")))))]})():null,
     depotNav("d_orders",open.length||null));
 };
@@ -1076,12 +1077,15 @@ const addrOf=r=>[r.address,[r.zip,r.city].filter(Boolean).join(" ")].filter(Bool
 const mapsDir=(dest,origin,way)=>"https://www.google.com/maps/dir/?api=1&travelmode=driving&destination="+encodeURIComponent(dest)+(origin?"&origin="+encodeURIComponent(origin):"")+(way&&way.length?"&waypoints="+encodeURIComponent(way.join("|")):"");
 VIEWS.d_driver=async function(){
   const td=zurichToday();let list=[];
-  try{const{data}=await sb.from("orders").select("*,order_lines(id)").eq("status","delivered").gte("delivered_at",zts(addDays(td,-1))).order("delivered_at");list=(data||[]).filter(o=>!o.arrived_at||o.arrived_at.slice(0,10)>=td||(o.delivered_at||"").slice(0,10)===td)}catch(e){}
+  let fresh=false;try{const{data,error}=await sb.from("orders").select("*,order_lines(id)").eq("status","delivered").gte("delivered_at",zts(addDays(td,-1))).order("delivered_at");if(!error&&data){list=data.filter(o=>!o.arrived_at||zurichDay(o.arrived_at)>=td||zurichDay(o.delivered_at||o.created_at)===td);fresh=true;LS.set("ddriver",list)}}catch(e){}
+  if(!fresh)list=LS.get("ddriver",[]);
+  const qa=new Set(OUT.filter(x=>x.fn==="depot_arrive").map(x=>x.args.p_order)),qd=new Set(OUT.filter(x=>x.fn==="depot_depart").flatMap(x=>x.args.p_orders||[]));
+  list=list.map(o=>({...o,arrived_at:o.arrived_at||(qa.has(o.id)?new Date().toISOString():null),departed_at:o.departed_at||(qd.has(o.id)||qa.has(o.id)?new Date().toISOString():null)}));
   if(S.view!=="d_driver")return;
   list.sort((a,b)=>tourIdx(a.resto_id)-tourIdx(b.resto_id));
   const todo=list.filter(o=>!o.arrived_at);const co=S.company||{};const depotAddr=addrOf(co);
   const stopsAddr=todo.map(o=>addrOf(R(o.resto_id))||R(o.resto_id).name+", Genève");
-  const depart=async(ids,btn)=>{if(btn)btn.disabled=true;try{await rpc("depot_depart",{p_pin:S.depotPin||S.adminPin,p_orders:ids})}catch(e){toast(errMsg(e),"bad")}refresh()};
+  const depart=async(ids,btn)=>{if(btn)btn.disabled=true;try{const r=await call("depot_depart",{p_pin:S.depotPin||S.adminPin,p_orders:ids},t("tour"));if(r&&r.queued)toast(t("queued"),"ok")}catch(e){toast(errMsg(e),"bad")}refresh()};
   const arrive=async(o,btn)=>{if(btn)btn.disabled=true;try{await call("depot_arrive",{p_pin:S.depotPin||S.adminPin,p_order:o.id},t("arrived")+" · "+R(o.resto_id).name);buzz(true);toast("✓ "+t("arrived")+" · "+R(o.resto_id).name,"ok")}catch(e){toast(errMsg(e),"bad")}refresh()};
   const card=(o,i)=>{const r=R(o.resto_id),addr=addrOf(r),c=rcol(o.resto_id);
     const st=o.arrived_at?h("span",{class:"pill ok"},"✓ "+t("st_arrived")+" "+tfmt(o.arrived_at)):o.departed_at?h("span",{class:"pill blue"},"🚚 "+t("st_departed")):h("span",{class:"pill acc"},t("st_ready"));
@@ -1091,7 +1095,7 @@ VIEWS.d_driver=async function(){
       o.arrived_at?null:h("div",{class:"row",style:"gap:8px;margin-top:12px;flex-wrap:wrap"},
         h("a",{class:"btn light sm",href:mapsDir(addr||r.name+", Genève"),target:"_blank",rel:"noopener"},"📍 "+t("route")),
         r.phone?h("a",{class:"btn light sm",href:"tel:"+r.phone.replace(/\s/g,"")},"📞 "+t("call")):null,
-        h("button",{class:"btn light sm",onclick:()=>openDeliveryNote(o.id)},"🖨️ BL"),
+        h("button",{class:"btn light sm",onclick:()=>openDeliveryNote(o.id)},"🖨️ "+t("dnote_short")),
         h("span",{class:"sp"}),
         h("button",{class:"btn sm",style:"background:var(--ok);color:#fff",onclick:e=>arrive(o,e.currentTarget)},"✔ "+t("arrived"))))};
   const notDeparted=todo.filter(o=>!o.departed_at);
@@ -1268,10 +1272,10 @@ function moveSheet(p,kind){
     if(kind==="in"&&["surg","frais"].includes(p.cat)&&!ex.expiry)throw new Error(t("dlc_hint"));
     const r=await call("depot_move",{p_pin:S.depotPin||S.adminPin,p_product:p.id,p_kind:kind,p_qty:n,p_reason:ex.reason||"",p_by:S.who,p_ref:uuid(),p_expiry:ex.expiry||null,p_lot:ex.lot||null},(kind==="in"?t("stock_in"):t("losses"))+" · "+p.name);
     p.stock=num(p.stock)+(kind==="in"?n:-n);toast(r&&r.queued?t("queued"):"✓ "+t("saved"),"ok");loadLots().then(refresh);refresh()},
-    ()=>{if(kind==="in"){const i=h("input",{placeholder:"Ex. Prodega, Transgourmet…"}),ex=h("input",{type:"date",min:zurichToday()}),lt=h("input",{placeholder:"Ex. L2611"});const need=["surg","frais"].includes(p.cat);
+    ()=>{if(kind==="in"){const i=h("input",{placeholder:t("ex_supplier")}),ex=h("input",{type:"date",min:zurichToday()}),lt=h("input",{placeholder:"Ex. L2611"});const need=["surg","frais"].includes(p.cat);
         return{el:h("div",{},h("div",{class:"f2"},h("div",{class:"fld"},h("label",{style:need?"color:var(--acc-d)":""},t("dlc")+(need?" *":"")),ex),h("div",{class:"fld"},h("label",{},t("lot")),lt)),need?h("p",{class:"muted small",style:"margin:-6px 0 10px"},t("dlc_hint")):null,h("div",{class:"fld"},h("label",{},t("supplier")),i)),
           val:()=>({reason:i.value.trim(),expiry:ex.value||null,lot:lt.value.trim()})}}
-      let sel=t("r_expired");const seg=h("div",{class:"seg",style:"margin-bottom:12px"});const d=()=>seg.replaceChildren(...reasons.map(([k])=>h("button",{class:sel===t(k)?"on":"",onclick:()=>{sel=t(k);d()}},t(k))));d();
+      let sel=T.fr.r_expired;const seg=h("div",{class:"seg",style:"margin-bottom:12px"});const d=()=>seg.replaceChildren(...reasons.map(([k])=>h("button",{class:sel===T.fr[k]?"on":"",onclick:()=>{sel=T.fr[k];d()}},t(k))));d();
       return{el:h("div",{},h("div",{class:"fld"},h("label",{},t("reason"))),seg),val:()=>sel}});
 }
 function moveView(kind){
@@ -1303,9 +1307,9 @@ VIEWS.d_inv=function(){
     S.invLoc?h("div",{class:"row",style:"margin-bottom:12px"},h("span",{class:"pill loc big"},"📍 "+S.invLoc),h("button",{class:"btn light sm",onclick:()=>{S.invLoc=null;refresh()}},"✕ "+t("all"))):null,
     h("div",{class:"search"},h("span",{class:"sic",html:ICON.search}),inp),box,
     h("div",{style:"height:70px"}),
-    h("div",{class:"sticky",style:"bottom:calc(env(safe-area-inset-bottom) + 92px)"},h("button",{class:"btn acc",onclick:async e=>{const counts=Object.entries(C).map(([product_id,qty])=>({product_id,qty,at:CA[product_id]||new Date().toISOString()}));if(!counts.length)return;e.target.disabled=true;
+    h("div",{class:"sticky",style:"bottom:calc(env(safe-area-inset-bottom) + 92px)"},h("button",{class:"btn acc",onclick:async e=>{const counts=Object.entries(C).map(([product_id,qty])=>({product_id,qty,at:CA[product_id]||new Date().toISOString()}));if(!counts.length)return;e.currentTarget.disabled=true;
       try{const n=await call("depot_inventory",{p_pin:S.depotPin||S.adminPin,p_counts:counts,p_by:S.who,p_at:new Date().toISOString(),p_now:new Date().toISOString()},t("inventory"));S.invCounts={};S.invAt={};
-        if(n&&n.queued){for(const c of counts){const p=P(c.product_id);if(p)p.stock=c.qty}toast(t("queued"),"ok")}else{await loadBase();toast("✓ "+n+" "+t("changed"),"ok")}refresh()}catch(err){e.target.disabled=false;toast(errMsg(err),"bad")}}},t("validate_inv"),h("span",{},"(",cnt,")"))),
+        if(n&&n.queued){for(const c of counts){const p=P(c.product_id);if(p)p.stock=c.qty}toast(t("queued"),"ok")}else{await loadBase();toast("✓ "+n+" "+t("changed"),"ok")}refresh()}catch(err){e.currentTarget.disabled=false;toast(errMsg(err),"bad")}}},t("validate_inv"),h("span",{},"(",cnt,")"))),
     depotNav("d_inv",pendingCount||null));
 };
 
@@ -1407,10 +1411,10 @@ function editProduct(p){
     h("div",{class:"f2"},fld("min_stock","Stock minimum (alerte)",{type:"number",step:"any",inputmode:"decimal"}),h("div",{class:"fld"},h("label",{},"Code-barres (EAN)"),h("div",{class:"row",style:"gap:6px"},f.ean,h("button",{class:"icbtn",style:"box-shadow:none;border:1.5px solid var(--line)",onclick:()=>{S.onScan=code=>{f.ean.value=code;buzz(true);stopScanner();return{silent:true}};openScanner("Code-barres")}},ic("scan"))))),
     h("div",{class:"tgl",onclick:()=>{active=!active;sw.classList.toggle("on",active);sw.style.background=active?"var(--ok)":""}},h("div",{class:"sp b"},"Actif (visible pour les restos)"),sw),
     h("div",{class:"row"},h("button",{class:"btn light",style:"flex:1",onclick:()=>s.close()},t("cancel")),h("button",{class:"btn acc",style:"flex:1.4",onclick:async e=>{
-      if(!f.name.value.trim())return f.name.focus();e.target.disabled=true;
+      if(!f.name.value.trim())return f.name.focus();e.currentTarget.disabled=true;
       const data={id:p.id,cat:f.cat.value,name:f.name.value.trim(),unit:f.unit.value.trim(),price:Number(String(f.price.value).replace(",","."))||0,vat:Number(f.vat.value),ean:f.ean.value.trim(),min_stock:Number(f.min_stock.value)||0,location:f.location.value.trim(),active,cost:Number(String(f.cost.value).replace(",","."))||0};
       try{const id=await rpc("admin_save_product",{p_pin:S.adminPin,p:data});S.costs[id]=data.cost;
-        await rpc("admin_set_par",{p_pin:S.adminPin,p_rows:parIn.map(([r,i])=>({resto_id:r.id,product_id:id,par:Number(String(i.value).replace(",","."))||0}))});await loadPars();await loadBase();s.close();toast("✓ "+t("saved"),"ok");refresh()}catch(err){e.target.disabled=false;toast(/unique/.test(errMsg(err))?"Ce code-barres est déjà utilisé":errMsg(err),"bad")}}},t("save")))));
+        await rpc("admin_set_par",{p_pin:S.adminPin,p_rows:parIn.map(([r,i])=>({resto_id:r.id,product_id:id,par:Number(String(i.value).replace(",","."))||0}))});await loadPars();await loadBase();s.close();toast("✓ "+t("saved"),"ok");refresh()}catch(err){e.currentTarget.disabled=false;toast(/unique/.test(errMsg(err))?"Ce code-barres est déjà utilisé":errMsg(err),"bad")}}},t("save")))));
 }
 function labelsSheet(){
   const noEan=S.products.filter(p=>p.active&&!p.ean);
@@ -1489,8 +1493,8 @@ function creditSheet(inv){
     h("div",{class:"fld"},h("label",{},"Raison"),reason),
     h("div",{class:"tgl",onclick:()=>{restock=!restock;sw.classList.toggle("on",restock);sw.style.background=restock?"var(--ok)":""}},h("div",{class:"sp"},h("div",{class:"b"},"Remettre en stock"),h("div",{class:"un muted small"},"Si la marchandise revient au dépôt — pas si elle a déjà été comptée dans un inventaire")),sw),
     h("div",{class:"row"},h("button",{class:"btn light",style:"flex:1",onclick:()=>s.close()},t("cancel")),h("button",{class:"btn bad",style:"flex:1.4",onclick:async e=>{
-      const lines=Object.entries(C).filter(([,q])=>q>0).map(([product_id,qty])=>({product_id,qty,reason:reason.value.trim()}));if(!lines.length)return toast("Indiquez une quantité","bad");e.target.disabled=true;
-      try{const r=await rpc("admin_credit_note",{p_pin:S.adminPin,p_invoice:inv.id,p_lines:lines,p_restock:restock,p_note:reason.value.trim()?"Avoir sur "+inv.number+" · "+reason.value.trim():""});s.close();if(restock)await loadBase();toast("✓ Avoir "+r.number,"ok");refresh();mailInvoice(r.invoice)}catch(err){e.target.disabled=false;toast(errMsg(err),"bad")}}},"Créer l'avoir"))));
+      const lines=Object.entries(C).filter(([,q])=>q>0).map(([product_id,qty])=>({product_id,qty,reason:reason.value.trim()}));if(!lines.length)return toast("Indiquez une quantité","bad");e.currentTarget.disabled=true;
+      try{const r=await rpc("admin_credit_note",{p_pin:S.adminPin,p_invoice:inv.id,p_lines:lines,p_restock:restock,p_note:reason.value.trim()?"Avoir sur "+inv.number+" · "+reason.value.trim():""});s.close();if(restock)await loadBase();toast("✓ Avoir "+r.number,"ok");refresh();mailInvoice(r.invoice)}catch(err){e.currentTarget.disabled=false;toast(errMsg(err),"bad")}}},"Créer l'avoir"))));
 }
 VIEWS.a_settings=needAdmin(function(){
   const c=S.company;const f={};const fld=(k,l,a={})=>{f[k]=h("input",{value:c[k]??"",...a});return h("div",{class:"fld"},h("label",{},l),f[k])};
@@ -1809,7 +1813,7 @@ async function start(){
     start();netBadge();
     loadBase().then(()=>{flush();if(!document.querySelector(".sheet")&&!document.querySelector(".scan")&&document.activeElement?.tagName!=="INPUT")refresh()}).catch(()=>{});
     return}
-  try{await loadBase()}catch(e){return mount(h("div",{class:"empty"},h("div",{class:"e"},"📡"),"Connexion impossible. Vérifiez internet.",h("br"),h("button",{class:"btn acc",style:"margin-top:16px",onclick:()=>location.reload()},"Réessayer")))}
+  try{await loadBase()}catch(e){return mount(h("div",{class:"empty"},h("div",{class:"e"},"📡"),t("no_conn"),h("br"),h("button",{class:"btn acc",style:"margin-top:16px",onclick:()=>location.reload()},"Réessayer")))}
   start();netBadge();flush();
 })();
 if("serviceWorker"in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
