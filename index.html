@@ -414,7 +414,7 @@ function textParts(str){if(!EMO_TEST.test(str))return[document.createTextNode(st
     part=part.replace(/\s{2,}/g," ");if(part.trim()||part===" ")out.push(document.createTextNode(part))}
   if(out.length&&out[0].nodeType===3)out[0].textContent=out[0].textContent.replace(/^\s+/,"");
   return out}
-function h(tag,attrs,...kids){const el=document.createElement(tag);if(attrs)for(const[k,v]of Object.entries(attrs)){if(v==null||v===false)continue;if(k.startsWith("on"))el.addEventListener(k.slice(2),ev=>{try{Object.defineProperty(ev,"currentTarget",{value:el,configurable:true})}catch(_){}return v(ev)});else if((k==="title"||k==="placeholder"||k==="aria-label")&&typeof v==="string")el.setAttribute(k,v.replace(new RegExp(EMO_SPLIT.source,"gu"),"").trim());else if(k==="class")el.className=v;else if(k==="style")el.style.cssText=v;else if(k==="html")el.innerHTML=v;else el.setAttribute(k,v===true?"":v)}for(const c of kids.flat(9)){if(c==null||c===false)continue;if(c instanceof Node)el.append(c);else el.append(...textParts(String(c)))}return el}
+function h(tag,attrs,...kids){const el=document.createElement(tag);if(attrs)for(const[k,v]of Object.entries(attrs)){if(v==null||v===false)continue;if(k.startsWith("on"))el.addEventListener(k.slice(2),ev=>{const own=Object.getOwnPropertyDescriptor(ev,"currentTarget");try{Object.defineProperty(ev,"currentTarget",{value:el,configurable:true})}catch(_){}try{return v(ev)}finally{if(own)try{Object.defineProperty(ev,"currentTarget",own)}catch(_){}}});else if((k==="title"||k==="placeholder"||k==="aria-label")&&typeof v==="string")el.setAttribute(k,v.replace(new RegExp(EMO_SPLIT.source,"gu"),"").trim());else if(k==="class")el.className=v;else if(k==="style")el.style.cssText=v;else if(k==="html")el.innerHTML=v;else el.setAttribute(k,v===true?"":v)}for(const c of kids.flat(9)){if(c==null||c===false)continue;if(c instanceof Node)el.append(c);else el.append(...textParts(String(c)))}return el}
 const ICON={
 search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
 cart:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 7h12l-1.2 11.2a2 2 0 0 1-2 1.8H9.2a2 2 0 0 1-2-1.8z"/><path d="M9 7V6a3 3 0 0 1 6 0v1"/></svg>',
@@ -603,7 +603,7 @@ const daysTo=iso=>Math.round((new Date(iso+"T12:00:00")-new Date(zurichToday()+"
 const firstLot=pid=>((S.lots||{})[pid]||[]).find(l=>l.expiry)||null;
 const ddmm=iso=>iso?iso.slice(8,10)+"."+iso.slice(5,7):"";
 function dlcPill(pid,prefix){const l=firstLot(pid);if(!l)return null;const d=daysTo(l.expiry);
-  return h("span",{class:"pill "+(d<0?"bad":d<=3?"acc":"")},(prefix?t("fefo")+" : ":"")+(d<0?t("expired")+" · ":"")+t("dlc")+" "+ddmm(l.expiry)+(l.lot?" · "+t("lot")+" "+l.lot:""))}
+  return h("span",{class:"pill "+(d<0?"bad":d<=3?"acc":""),style:"white-space:normal;max-width:100%;height:auto;min-height:26px;line-height:1.25;padding-top:3px;padding-bottom:3px"},(prefix?t("fefo")+" : ":"")+(d<0?t("expired")+" · ":"")+t("dlc")+" "+ddmm(l.expiry)+(l.lot?" · "+t("lot")+" "+l.lot:""))}
 const dlcSoon=(days=3)=>S.products.filter(p=>{const l=firstLot(p.id);return l&&daysTo(l.expiry)<=days});
 function lotSheet(p,l){const ex=h("input",{type:"date",value:l.expiry||""}),code=h("input",{value:l.lot||"",placeholder:t("lot")});const tr=h("div",{class:"muted small"},"…");
   const s=sheet(p.name+" · "+t("lot")+" "+(l.lot||"#"+l.id),h("div",{},h("div",{class:"f2"},h("div",{class:"fld"},h("label",{},t("dlc")),ex),h("div",{class:"fld"},h("label",{},t("lot")),code)),
@@ -753,7 +753,7 @@ async function flush(){if(flushing||!OUT.length||!navigator.onLine)return;flushi
       try{const d=await rpcRaw(it.fn,it.args);sent++;if(it.fn==="depot_deliver"&&d&&d.invoice)setTimeout(()=>mailInvoice(d.invoice),500)}
       catch(e){if(e&&e.code==="28000"){pinLost();break}
         if(!isBizErr(e)){it.tries=(it.tries||0)+1;if(it.tries%10===0&&OUT.length>1){OUT.push(OUT.shift());toast(t("sync_fail")+" · "+(it.label||"")+" : "+errMsg(e),"bad")}LS.set("outbox",OUT);break}
-        if(!(it.fn==="depot_deliver"&&/déjà livrée/.test(errMsg(e))))toast(t("sync_fail")+" · "+(it.label||"")+" : "+errMsg(e),"bad")}
+        if(!(it.fn==="depot_deliver"&&/déjà livrée/.test((e&&e.message)||"")))toast(t("sync_fail")+" · "+(it.label||"")+" : "+errMsg(e),"bad")}
       OUT.shift();LS.set("outbox",OUT)}}
   finally{flushing=false;netBadge()}
   if(sent){toast("✓ "+t("synced")+" ("+sent+")","ok");if(S.mode==="depot")await loadBase().catch(()=>{});if(S.mode!=="resto")setTimeout(()=>mailPending(),2500);refresh()}}
@@ -797,12 +797,12 @@ async function checkReminder(){const cfg=S.reminder||{};if(S.mode!=="resto"||cfg
   if(OUT.some(x=>x.fn==="place_order"&&x.args.p_resto===S.resto))return;
   if(autoCoversNext())return;
   try{const{data,error}=await sb.from("orders").select("id").eq("resto_id",S.resto).eq("delivery_date",nd).limit(1);if(!error&&data&&data.length){LS.set("ordered_"+S.resto,nd);return}}catch(e){}
-  if(!remEl&&S.mode==="resto")showReminder()}
+  if(!remEl&&S.mode==="resto"&&!cartCount()&&S.view!=="r_cart")showReminder()}
 function showReminder(){const ring=()=>{beep(988,.15);setTimeout(()=>beep(784,.15),230);setTimeout(()=>beep(988,.22),460)};ring();const iv=setInterval(ring,15000);
   const close=()=>{clearInterval(iv);if(remEl)remEl.remove();remEl=null};
   remEl=h("div",{class:"remind"},h("div",{class:"box"},h("div",{class:"bell"},"🔔"),h("h1",{style:"margin-bottom:8px"},t("remind_title")),
     h("p",{class:"muted",style:"margin:0 0 22px;font-size:17px"},t("remind_sub")+" ",h("b",{style:"color:var(--ink)"},dfmt(nextDelivery()))),
-    h("button",{class:"btn acc w",style:"height:58px;font-size:18px;margin-bottom:10px",onclick:()=>{close();go(cartCount()?"r_cart":Object.keys(myPars()).length?"r_count":"r_order")}},t("order_now")),
+    h("button",{class:"btn acc w",style:"height:58px;font-size:18px;margin-bottom:10px",onclick:()=>{LS.set("snooze",Date.now()+20*60000);close();go(cartCount()?"r_cart":Object.keys(myPars()).length?"r_count":"r_order")}},t("order_now")),
     h("button",{class:"btn light w",onclick:()=>{LS.set("snooze",Date.now()+30*60000);close()}},t("later")+" (30 min)")));
   document.body.append(remEl)}
 let rtStarted=false;
@@ -1063,7 +1063,7 @@ VIEWS.d_orders=async function(){
       h("button",{class:"btn acc sm",onclick:e=>enablePush(e.currentTarget)},t("notif_on")),h("button",{class:"btn light sm","aria-label":t("close"),onclick:()=>{LS.set("push_hide",true);refresh()}},"✕")):null,
     open.length?Object.entries(groups).map(([d,os])=>[h("div",{class:"sec"},h("h2",{},t("delivery")+" · "+dayLabel(d)),h("span",{class:"pill dark"},os.length)),grpBtn(d),h("div",{class:"list"},os.map(card))]):h("div",{class:"empty"},h("div",{class:"e"},"✅"),t("no_orders")),
     (b.data||[]).length?(()=>{const done=[...b.data].sort((x,y)=>tourIdx(x.resto_id)-tourIdx(y.resto_id));const ready=done.filter(o=>!o.departed_at);
-      const depart=async(ids,btn)=>{if(btn)btn.disabled=true;try{const n=await rpc("depot_depart",{p_pin:S.depotPin,p_orders:ids});toast("🚚 "+n+" · "+t("depart"),"ok")}catch(e){toast(errMsg(e),"bad")}refresh()};
+      const depart=async(ids,btn)=>{if(btn)btn.disabled=true;try{const n=await call("depot_depart",{p_pin:S.depotPin,p_orders:ids},t("depart"));toast(n&&n.queued?t("queued"):"🚚 "+n+" · "+t("depart"),"ok")}catch(e){toast(errMsg(e),"bad")}refresh()};
       return[h("button",{class:"banner",style:"width:100%;text-align:left;margin:16px 0 0;--x:var(--blue)",onclick:()=>go("d_driver")},h("div",{class:"ic"},"🚚"),h("div",{class:"sp"},h("b",{},t("driver_mode")),h("small",{},plural(done.length,"stops_n"))),h("span",{class:"plus"},"›")),
         h("div",{class:"sec"},h("h2",{},"🚚 "+t("tour")),ready.length>1?h("button",{class:"btn acc sm",style:"color:#fff",onclick:e=>depart(ready.map(o=>o.id),e.currentTarget)},t("depart_all")+" ("+ready.length+")"):h("span",{class:"pill ok"},done.length)),
         h("div",{class:"list"},done.map((o,i)=>h("div",{class:"oc",style:"flex-wrap:wrap"},h("div",{class:"ic",style:o.departed_at?"background:var(--blue-s);color:var(--blue)":"background:"+rcol(o.resto_id)[1]+";color:"+rcol(o.resto_id)[0]+";font-weight:700"},o.departed_at?"🚚":String(i+1)),
@@ -1079,8 +1079,8 @@ VIEWS.d_driver=async function(){
   const td=zurichToday();let list=[];
   let fresh=false;try{const{data,error}=await sb.from("orders").select("*,order_lines(id)").eq("status","delivered").gte("delivered_at",zts(addDays(td,-1))).order("delivered_at");if(!error&&data){list=data.filter(o=>!o.arrived_at||zurichDay(o.arrived_at)>=td||zurichDay(o.delivered_at||o.created_at)===td);fresh=true;LS.set("ddriver",list)}}catch(e){}
   if(!fresh)list=LS.get("ddriver",[]);
-  const qa=new Set(OUT.filter(x=>x.fn==="depot_arrive").map(x=>x.args.p_order)),qd=new Set(OUT.filter(x=>x.fn==="depot_depart").flatMap(x=>x.args.p_orders||[]));
-  list=list.map(o=>({...o,arrived_at:o.arrived_at||(qa.has(o.id)?new Date().toISOString():null),departed_at:o.departed_at||(qd.has(o.id)||qa.has(o.id)?new Date().toISOString():null)}));
+  const qa=new Map(OUT.filter(x=>x.fn==="depot_arrive").map(x=>[x.args.p_order,x.args.p_at||new Date(x.at).toISOString()])),qd=new Map(OUT.filter(x=>x.fn==="depot_depart").flatMap(x=>(x.args.p_orders||[]).map(id=>[id,new Date(x.at).toISOString()])));
+  list=list.map(o=>({...o,arrived_at:o.arrived_at||qa.get(o.id)||null,departed_at:o.departed_at||qd.get(o.id)||qa.get(o.id)||null}));
   if(S.view!=="d_driver")return;
   list.sort((a,b)=>tourIdx(a.resto_id)-tourIdx(b.resto_id));
   const todo=list.filter(o=>!o.arrived_at);const co=S.company||{};const depotAddr=addrOf(co);
@@ -1243,7 +1243,7 @@ VIEWS.d_stock=function(){
   function draw(){const q=S.q.trim().toLowerCase();const it=S.products.filter(p=>p.active&&fmatch(p,q)&&(!onlyAlerts||alerts.includes(p))&&(!dlcOnly||soon.includes(p)));
     const byCat={};for(const p of it)(byCat[p.cat]=byCat[p.cat]||[]).push(p);
     box.replaceChildren(...S.cats.filter(c=>byCat[c.id]).map(c=>h("div",{class:"card",style:"padding:6px 14px"},h("div",{class:"b cath","data-cat":c.id,style:"padding:10px 0 6px"},c.label),byCat[c.id].map(p=>{const low=num(p.min_stock)>0&&num(p.stock)<=num(p.min_stock);
-      return h("button",{class:"lr",style:"width:100%;text-align:left",onclick:()=>productSheet(p)},h("div",{class:"em",style:tint(p.cat)},pimg(p)),h("div",{class:"sp"},h("div",{class:"nm"},p.name),h("div",{class:"un"},p.unit+(num(p.min_stock)?" · "+t("min")+" "+qfmt(p.min_stock):""))),dlcOnly||soon.includes(p)?h("span",{style:"margin-right:6px"},dlcPill(p.id)):null,p.unavailable?h("span",{class:"pill bad",style:"margin-right:6px"},t("out")):null,h("span",{class:"pill "+(num(p.stock)<0?"bad":low?"bad":"")},qfmt(p.stock)))}))))}
+      return h("button",{class:"lr",style:"width:100%;text-align:left",onclick:()=>productSheet(p)},h("div",{class:"em",style:tint(p.cat)},pimg(p)),h("div",{class:"sp"},h("div",{class:"nm"},p.name),h("div",{class:"un"},p.unit+(num(p.min_stock)?" · "+t("min")+" "+qfmt(p.min_stock):"")),dlcOnly||soon.includes(p)?h("div",{style:"margin-top:4px"},dlcPill(p.id)):null),p.unavailable?h("span",{class:"pill bad",style:"margin-right:6px"},t("out")):null,h("span",{class:"pill "+(num(p.stock)<0?"bad":low?"bad":"")},qfmt(p.stock)))}))))}
   draw();
   mount(topBar(t("stock"),"Chic Distribution",[h("button",{class:"icbtn","aria-label":t("locations"),title:t("locations"),onclick:locationsSheet},"📍"),h("button",{class:"icbtn",onclick:()=>quickScan()},ic("scan"))]),
     h("div",{class:"search"},h("span",{class:"sic",html:ICON.search}),inp),

@@ -1,5 +1,5 @@
 // Service worker : ouverture instantanée (cache de l'app) + notifications.
-const V = "cd-v16";
+const V = "cd-v17";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon.svg", "icon-192.png", "apple-touch-icon.png"];
 const LIBS = [
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js",
