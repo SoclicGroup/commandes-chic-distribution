@@ -670,7 +670,7 @@ async function mailInvoice(id,force){
   catch(e){if(!isNetErr(e))toast("✉️ "+errMsg(e),"bad");return null}}
 let mailBusy=false;
 async function mailPending(){if(mailBusy||!navigator.onLine||(S.invMail&&S.invMail.enabled===false))return;mailBusy=true;
-  try{const since=new Date(Date.now()-35*864e5).toISOString();const{data}=await sb.from("invoices").select("id").is("emailed_at",null).gte("created_at",since).order("id").limit(10);
+  try{const since=new Date(Date.now()-35*864e5).toISOString();const{data}=await sb.from("invoices").select("id").is("emailed_at",null).gte("created_at",since).order("id",{ascending:false}).limit(10);
     for(const r of data||[])await mailInvoice(r.id)}catch(e){}finally{mailBusy=false}}
 /* Excel (SheetJS, chargé à la demande) */
 let xlsxP=null;
@@ -748,7 +748,7 @@ async function call(fn,args,label){if(!navigator.onLine){enqueue(fn,args,label);
 let flushing=false;
 async function flush(){if(flushing||!OUT.length||!navigator.onLine)return;flushing=true;let sent=0;
   try{while(OUT.length){const it=OUT[0];
-      if(it.args&&it.args.p_pin!==undefined&&/^depot_/.test(it.fn)&&S.depotPin)it.args.p_pin=S.depotPin;if(it.fn==="depot_inventory"&&it.args)it.args.p_now=new Date().toISOString();
+      if(it.args&&it.args.p_pin!==undefined&&/^depot_/.test(it.fn)&&S.depotPin)it.args.p_pin=S.depotPin;if(it.args&&it.args.p_at)it.args.p_now=new Date().toISOString();
       try{const d=await rpcRaw(it.fn,it.args);sent++;if(it.fn==="depot_deliver"&&d&&d.invoice)setTimeout(()=>mailInvoice(d.invoice),500)}
       catch(e){if(e&&e.code==="28000"){pinLost();break}
         if(!isBizErr(e)){it.tries=(it.tries||0)+1;if(it.tries%10===0&&OUT.length>1){OUT.push(OUT.shift());toast(t("sync_fail")+" · "+(it.label||"")+" : "+errMsg(e),"bad")}LS.set("outbox",OUT);break}
@@ -991,7 +991,7 @@ VIEWS.r_cart=function(){
   async function send(btn,who){btn.disabled=true;
     try{const all=Object.entries(S.cart).filter(([id])=>P(id));const lines=all.filter(([id])=>!isOut(P(id))).map(([product_id,qty])=>({product_id,qty}));if(!lines.length)throw new Error(t("out_removed"));if(lines.length<all.length)toast(t("out_removed"));
       const ref=LS.get("cartref_"+S.resto,"")||uuid();LS.set("cartref_"+S.resto,ref);
-      const r=await call("place_order",{p_resto:S.resto,p_lines:lines,p_urgent:urgent,p_note:note.value.trim(),p_by:who,p_ref:ref,p_at:new Date().toISOString()},t("order")+" · "+R(S.resto).name);LS.set("cartref_"+S.resto,"");
+      const r=await call("place_order",{p_resto:S.resto,p_lines:lines,p_urgent:urgent,p_note:note.value.trim(),p_by:who,p_ref:ref,p_at:new Date().toISOString(),p_now:new Date().toISOString()},t("order")+" · "+R(S.resto).name);LS.set("cartref_"+S.resto,"");
       LS.set("names",[who,...names.filter(x=>x.toLowerCase()!==who.toLowerCase())].slice(0,8));LS.set("ordered_"+S.resto,zurichToday());
       S.cart={};S.cm={};LS.set("cart",{});buzz(true);go("r_sent",r&&r.queued?{queued:true,delivery_date:nextDelivery()}:r)}catch(err){btn.disabled=false;toast(errMsg(err),"bad")}}
   const sw=h("div",{class:"sw"+(urgent?" on":"")});
@@ -1291,11 +1291,11 @@ function moveView(kind){
 VIEWS.d_in=moveView("in");VIEWS.d_loss=moveView("loss");
 VIEWS.d_inv=function(){
   S.invCounts=S.invCounts||{};const C=S.invCounts;const CA=S.invAt=S.invAt||{};
-  S.onScan=code=>{const p=resolveCode(code);if(!p)return unknownCode(code);buzz(true);stopScanner();qtySheet(p.name,p.unit+" · "+t("in_stock")+" "+qfmt(p.stock),C[p.id]??"",n=>{C[p.id]=n;CA[p.id]=CA[p.id]||new Date().toISOString();refresh()});return{silent:true}};
+  S.onScan=code=>{const p=resolveCode(code);if(!p)return unknownCode(code);buzz(true);stopScanner();qtySheet(p.name,p.unit+" · "+t("in_stock")+" "+qfmt(p.stock),C[p.id]??"",n=>{C[p.id]=n;CA[p.id]=new Date().toISOString();refresh()});return{silent:true}};
   const inp=h("input",{placeholder:t("search"),value:S.q,oninput:e=>{S.q=e.target.value;draw()}});const box=h("div",{class:"list"});
   function draw(){const q=S.q.trim().toLowerCase();const it=S.products.filter(p=>p.active&&fmatch(p,q)&&(!S.invLoc||p.location===S.invLoc));const byCat={};for(const p of it)(byCat[p.cat]=byCat[p.cat]||[]).push(p);
     box.replaceChildren(...S.cats.filter(c=>byCat[c.id]).map(c=>h("div",{class:"card",style:"padding:6px 14px"},h("div",{class:"b cath","data-cat":c.id,style:"padding:10px 0 6px"},c.label),byCat[c.id].map(p=>{
-      const i=h("input",{type:"number",inputmode:"decimal",step:"any",min:"0",placeholder:qfmt(p.stock),value:C[p.id]??"",style:"width:92px;text-align:center;border:1.5px solid var(--line);border-radius:12px;padding:10px;font-weight:800;font-size:16px;background:"+(C[p.id]!=null?"var(--acc-s)":"#fff"),oninput:e=>{const v=e.target.value;if(v===""){delete C[p.id];delete CA[p.id]}else{C[p.id]=Number(v.replace(",","."));CA[p.id]=CA[p.id]||new Date().toISOString()}e.target.style.background=v===""?"#fff":"var(--acc-s)";cnt.textContent=Object.keys(C).length}});
+      const i=h("input",{type:"number",inputmode:"decimal",step:"any",min:"0",placeholder:qfmt(p.stock),value:C[p.id]??"",style:"width:92px;text-align:center;border:1.5px solid var(--line);border-radius:12px;padding:10px;font-weight:800;font-size:16px;background:"+(C[p.id]!=null?"var(--acc-s)":"#fff"),oninput:e=>{const v=e.target.value;if(v===""){delete C[p.id];delete CA[p.id]}else{C[p.id]=Number(v.replace(",","."));const kt=S.invKey=S.invKey||{};if(!CA[p.id]||Date.now()-(kt[p.id]||0)>30000)CA[p.id]=new Date().toISOString();kt[p.id]=Date.now()}e.target.style.background=v===""?"#fff":"var(--acc-s)";cnt.textContent=Object.keys(C).length}});
       return h("div",{class:"lr"},h("div",{class:"sp"},h("div",{class:"nm"},p.name),h("div",{class:"un"},p.unit+" · "+t("in_stock")+" "+qfmt(p.stock))),i)}))))}
   draw();const cnt=h("span",{},Object.keys(C).length);
   mount(topBar(t("inventory"),"Chic Distribution",h("button",{class:"icbtn",onclick:()=>openScanner(t("inventory"))},ic("scan"))),

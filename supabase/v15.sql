@@ -5,22 +5,45 @@ create index if not exists stock_moves_acted on stock_moves(product_id, acted_at
 create or replace function _acted(p_at timestamptz) returns timestamptz language sql stable set search_path=public as $$
   select case when p_at is null or p_at > now() then now() else greatest(p_at, now() - interval '30 days') end $$;
 
--- Lots jamais supérieurs au stock (FEFO)
-create or replace function _reconcile_lots(p_product text) returns void language plpgsql security definer set search_path=public as $$
-declare ex numeric;
+-- Décalage d'horloge de l'appareil (p_now = son heure au moment de l'envoi)
+create or replace function _skew(p_now timestamptz) returns interval language sql stable set search_path=public as $$
+  select case when p_now is not null and abs(extract(epoch from now()-p_now))<86400 then now()-p_now else interval '0' end $$;
+
+alter table lot_moves add column if not exists stock_move_id bigint;
+alter table stock_moves add column if not exists lots_absorbed numeric not null default 0;
+
+-- Lots jamais supérieurs au stock (FEFO) ; p_move = inventaire responsable (pour la suite)
+drop function if exists _reconcile_lots(text);
+create or replace function _reconcile_lots(p_product text, p_move bigint default null) returns void language plpgsql security definer set search_path=public as $$
+declare ex numeric; m0 bigint;
 begin
   ex := (select coalesce(sum(qty),0) from lots where product_id=p_product) - greatest((select stock from products where id=p_product),0);
-  if ex>0 then perform _consume_lots(p_product,ex,null,'inventory'); end if;
+  if ex>0 then
+    m0 := (select coalesce(max(id),0) from lot_moves);
+    perform _consume_lots(p_product,ex,null,'inventory');
+    if p_move is not null then update lot_moves set stock_move_id=p_move where id>m0 and kind='inventory' and lot_id in (select id from lots where product_id=p_product); end if;
+  end if;
+end $$;
+
+-- Sortie (livraison/perte) déjà comptée par l'inventaire p_move : retire des lots seulement ce que cet inventaire n'a pas déjà retiré
+create or replace function _counted_lots_out(p_product text, p_qty numeric, p_move bigint, p_order bigint, p_kind text, p_acted timestamptz) returns void language plpgsql security definer set search_path=public as $$
+declare already numeric;
+begin
+  select least(p_qty, greatest(coalesce((select sum(qty) from lot_moves where stock_move_id=p_move),0) - m.lots_absorbed, 0)) into already from stock_moves m where m.id=p_move for update;
+  already := coalesce(already,0);
+  update stock_moves set lots_absorbed=lots_absorbed+already where id=p_move;
+  if already>0 and p_order is not null then perform _trace_lots(p_product, already, p_order, p_acted); end if;
+  if p_qty-already>0 then perform _consume_lots(p_product, p_qty-already, p_order, p_kind); end if;
 end $$;
 
 -- Mouvement déjà compté dans un inventaire plus récent : on corrige l'écart de cet inventaire (historique juste quel que soit l'ordre)
-create or replace function _absorb_counted(p_product text, p_acted timestamptz, p_d numeric) returns boolean language plpgsql security definer set search_path=public as $$
+drop function if exists _absorb_counted(text,timestamptz,numeric);
+create or replace function _absorb_counted(p_product text, p_acted timestamptz, p_d numeric) returns bigint language plpgsql security definer set search_path=public as $$
 declare mid bigint;
 begin
   select id into mid from stock_moves where product_id=p_product and kind='inventory' and acted_at > p_acted order by acted_at, id limit 1;
-  if mid is null then return false; end if;
-  update stock_moves set qty=qty-p_d where id=mid;
-  return true;
+  if mid is not null then update stock_moves set qty=qty-p_d where id=mid; end if;
+  return mid;
 end $$;
 
 -- Livraison déjà comptée : on trace quand même les lots présumés (FEFO à l'heure de la livraison) sans les décompter
@@ -35,11 +58,12 @@ begin
     rest := rest-take;
   end loop;
 end $$;
-revoke all on function _reconcile_lots(text), _absorb_counted(text,timestamptz,numeric), _trace_lots(text,numeric,bigint,timestamptz) from public, anon, authenticated;
+revoke all on function _reconcile_lots(text,bigint), _absorb_counted(text,timestamptz,numeric), _trace_lots(text,numeric,bigint,timestamptz), _counted_lots_out(text,numeric,bigint,bigint,text,timestamptz) from public, anon, authenticated;
 
-create or replace function depot_deliver(p_pin text, p_order bigint, p_lines jsonb, p_by text default '', p_at timestamptz default null) returns jsonb
+drop function if exists depot_deliver(text, bigint, jsonb, text, timestamptz);
+create or replace function depot_deliver(p_pin text, p_order bigint, p_lines jsonb, p_by text default '', p_at timestamptz default null, p_now timestamptz default null) returns jsonb
 language plpgsql security definer set search_path=public as $$
-declare o orders; ol order_lines; inv invoices; lines jsonb := '[]'; q numeric; acted timestamptz := _acted(p_at); counted boolean;
+declare o orders; ol order_lines; inv invoices; lines jsonb := '[]'; q numeric; acted timestamptz := _acted(p_at+_skew(p_now)); counted boolean; mid bigint;
 begin perform _need('depot',p_pin);
   select * into o from orders where id=p_order for update;
   if not found then raise exception 'Commande introuvable'; end if;
@@ -51,9 +75,9 @@ begin perform _need('depot',p_pin);
     if q>0 then
       -- un inventaire compté après cette livraison l'inclut déjà : on ne retire pas une 2e fois
       perform 1 from products where id=ol.product_id for update;   -- attend un inventaire en cours sur ce produit
-      counted := _absorb_counted(ol.product_id, acted, -q);
+      mid := _absorb_counted(ol.product_id, acted, -q); counted := mid is not null;
       if not counted then update products set stock=stock-q where id=ol.product_id; perform _consume_lots(ol.product_id,q,o.id,'out');
-      else perform _trace_lots(ol.product_id, q, o.id, acted); end if;
+      else perform _counted_lots_out(ol.product_id, q, mid, o.id, 'out', acted); end if;
       insert into stock_moves(product_id,kind,qty,ref,by_name,acted_at,reason) values (ol.product_id,'out',-q,o.number,coalesce(p_by,''),acted,case when counted then 'déjà inclus dans un inventaire' else '' end);
       lines := lines || jsonb_build_object('product_id',ol.product_id,'name',ol.name,'unit',ol.unit,'qty',q,'ordered',ol.qty_ordered,'price',ol.price,'vat',ol.vat);
     end if;
@@ -68,16 +92,17 @@ begin perform _need('depot',p_pin);
   return jsonb_build_object('invoice',inv.id,'number',inv.number);
 end $$;
 
-create or replace function depot_move(p_pin text, p_product text, p_kind text, p_qty numeric, p_reason text default '', p_by text default '', p_ref text default null, p_expiry date default null, p_lot text default null, p_at timestamptz default null) returns void
+drop function if exists depot_move(text, text, text, numeric, text, text, text, date, text, timestamptz);
+create or replace function depot_move(p_pin text, p_product text, p_kind text, p_qty numeric, p_reason text default '', p_by text default '', p_ref text default null, p_expiry date default null, p_lot text default null, p_at timestamptz default null, p_now timestamptz default null) returns void
 language plpgsql security definer set search_path=public as $$
-declare d numeric; acted timestamptz := _acted(p_at); counted boolean;
+declare d numeric; acted timestamptz := _acted(p_at+_skew(p_now)); counted boolean; mid bigint;
 begin perform _need('depot',p_pin);
   if p_ref is not null and exists(select 1 from stock_moves where client_ref=p_ref) then return; end if;
   if p_kind not in ('in','loss') then raise exception 'Type invalide'; end if;
   if p_qty is null or p_qty<=0 then raise exception 'Quantité invalide'; end if;
   d := case when p_kind='in' then p_qty else -p_qty end;
   perform 1 from products where id=p_product for update;   -- attend un inventaire en cours sur ce produit
-  counted := _absorb_counted(p_product, acted, d);
+  mid := _absorb_counted(p_product, acted, d); counted := mid is not null;
   if not counted then update products set stock=stock+d where id=p_product; end if;
   insert into stock_moves(product_id,kind,qty,reason,by_name,client_ref,acted_at) values (p_product,p_kind,d,
     concat_ws(' · ',nullif(coalesce(p_reason,''),''),case when counted then 'déjà inclus dans un inventaire' end)||case when p_expiry is not null then ' · DLC '||to_char(p_expiry,'DD.MM.YYYY') else '' end||case when coalesce(p_lot,'')<>'' then ' · lot '||p_lot else '' end,
@@ -87,13 +112,15 @@ begin perform _need('depot',p_pin);
     if counted then perform _reconcile_lots(p_product); end if;
   elsif not counted then
     perform _consume_lots(p_product,p_qty,null,'loss');
+  else
+    perform _counted_lots_out(p_product,p_qty,mid,null,'loss',acted);
   end if;
 end $$;
 
 drop function if exists depot_inventory(text, jsonb, text, timestamptz);
 create or replace function depot_inventory(p_pin text, p_counts jsonb, p_by text default '', p_at timestamptz default null, p_now timestamptz default null) returns int
 language plpgsql security definer set search_path=public as $$
-declare c jsonb; cur numeric; n int:=0; ex numeric; after numeric; target numeric; skew interval := case when p_now is not null and abs(extract(epoch from now()-p_now))<86400 then now()-p_now else interval '0' end; t_all timestamptz := _acted(p_at+skew); t0 timestamptz;
+declare c jsonb; cur numeric; n int:=0; ex numeric; after numeric; target numeric; skew interval := _skew(p_now); mid bigint; t_all timestamptz := _acted(p_at+skew); t0 timestamptz;
 begin perform _need('depot',p_pin);
   for c in select * from jsonb_array_elements(p_counts) loop
     select stock into cur from products where id=c->>'product_id' for update;
@@ -105,12 +132,14 @@ begin perform _need('depot',p_pin);
     target := (c->>'qty')::numeric + after;
     -- le comptage est toujours noté (même sans écart) : il sert de repère aux actions hors ligne rejouées plus tard
     insert into stock_moves(product_id,kind,qty,reason,by_name,acted_at) values (c->>'product_id','inventory',target-cur,
-      'Inventaire'||case when after<>0 then ' (mouvements faits après le comptage pris en compte)' else '' end,coalesce(p_by,''),t0);
+      'Inventaire'||case when after<>0 then ' (mouvements faits après le comptage pris en compte)' else '' end,coalesce(p_by,''),t0) returning id into mid;
     if cur <> target then update products set stock=target where id=c->>'product_id'; n:=n+1; end if;
-    perform _reconcile_lots(c->>'product_id');
+    perform _reconcile_lots(c->>'product_id', mid);
   end loop; return n;
 end $$;
 grant execute on function depot_inventory(text, jsonb, text, timestamptz, timestamptz) to anon, authenticated;
+grant execute on function depot_deliver(text, bigint, jsonb, text, timestamptz, timestamptz) to anon, authenticated;
+grant execute on function depot_move(text, text, text, numeric, text, text, text, date, text, timestamptz, timestamptz) to anon, authenticated;
 
 create or replace function admin_import_products(p_pin text, p_rows jsonb) returns jsonb
 language plpgsql security definer set search_path=public as $$
@@ -251,8 +280,8 @@ begin
       (case when i.kind='credit' then -1 else 1 end)*(l->>'qty')::numeric,l->>'price',l->>'vat',round((case when i.kind='credit' then -1 else 1 end)*(l->>'qty')::numeric*(l->>'price')::numeric,2)),E'\r\n' order by i.id),'')
     into f_lines from invoices i left join restaurants r on r.id=i.resto_id, jsonb_array_elements(i.lines) l;
   select 'Date;Produit;Type;Quantité;Raison;Référence;Par'||E'\r\n'||
-    coalesce(string_agg(concat_ws(';',to_char(m.created_at at time zone 'Europe/Zurich','DD.MM.YYYY HH24:MI'),_csv(p.name),
-      case m.kind when 'in' then 'Entrée' when 'out' then 'Livraison' when 'loss' then 'Perte' when 'inventory' then 'Inventaire' else 'Retour (avoir)' end,m.qty,_csv(m.reason),_csv(m.ref),_csv(m.by_name)),E'\r\n' order by m.id),'')
+    coalesce(string_agg(concat_ws(';',to_char(coalesce(m.acted_at,m.created_at) at time zone 'Europe/Zurich','DD.MM.YYYY HH24:MI'),_csv(p.name),
+      case m.kind when 'in' then 'Entrée' when 'out' then 'Livraison' when 'loss' then 'Perte' when 'inventory' then 'Inventaire' else 'Retour (avoir)' end,m.qty,_csv(m.reason),_csv(m.ref),_csv(m.by_name)),E'\r\n' order by m.acted_at,m.id),'')
     into f_moves from stock_moves m left join products p on p.id=m.product_id where m.acted_at>=since;
   select 'N°;Créée le;Restaurant;Par;Livraison;Urgent;Auto;Statut;Partie à;Produit;Commandé;Livré'||E'\r\n'||
     coalesce(string_agg(concat_ws(';',_csv(o.number),to_char(o.created_at at time zone 'Europe/Zurich','DD.MM.YYYY HH24:MI'),_csv(r.name),_csv(o.ordered_by),to_char(o.delivery_date,'DD.MM.YYYY'),
@@ -265,3 +294,48 @@ begin
     jsonb_build_object('name','commandes-13-mois.csv','content',_b64(f_orders)),
     jsonb_build_object('name','mouvements-de-stock-13-mois.csv','content',_b64(f_moves)));
 end $$;
+
+-- Décalage d'horloge corrigé aussi pour les commandes et l'arrivée chez le resto
+drop function if exists place_order(text, jsonb, boolean, text, text, text, timestamptz);
+create or replace function place_order(p_resto text, p_lines jsonb, p_urgent boolean default false, p_note text default '', p_by text default '', p_ref text default null, p_at timestamptz default null, p_now timestamptz default null)
+returns jsonb language plpgsql security definer set search_path=public as $$
+declare o orders; l record; p products; n int := 0; rname text; d date; today date := (now() at time zone 'Europe/Zurich')::date;
+  jours text[] := array['lundi','mardi','mercredi','jeudi','vendredi','samedi','dimanche'];
+begin
+  if p_ref is not null then
+    select * into o from orders where client_ref=p_ref;
+    if found then return jsonb_build_object('id',o.id,'number',o.number,'delivery_date',o.delivery_date,'dup',true); end if;
+  end if;
+  select name into rname from restaurants where id=p_resto;
+  if rname is null then raise exception 'Restaurant inconnu'; end if;
+  if trim(coalesce(p_by,''))='' then raise exception 'Prénom obligatoire'; end if;
+  if p_at is not null and p_at+_skew(p_now) between now() - interval '4 days' and now() + interval '10 minutes' then d := next_delivery_from(p_at+_skew(p_now)); end if;
+  if d is null or d < today then d := next_delivery_date(); end if;
+  insert into orders(number,resto_id,delivery_date,urgent,note,ordered_by,client_ref)
+    values ('C-'||to_char(now() at time zone 'Europe/Zurich','YYMMDD')||'-'||lpad(nextval('order_seq')::text,4,'0'), p_resto, d,
+            coalesce(p_urgent,false), coalesce(p_note,''), left(trim(p_by),40), p_ref)
+    returning * into o;
+  for l in select x->>'product_id' pid, round(sum(coalesce((x->>'qty')::numeric,0)),2) qty from jsonb_array_elements(p_lines) with ordinality t(x,ord) group by 1 order by min(ord) loop
+    if l.qty > 99999 then raise exception 'Quantité trop grande : %', l.qty; end if;
+    if l.qty > 0 then
+      select * into p from products where id = l.pid and active and not unavailable;
+      if found then
+        insert into order_lines(order_id,product_id,name,unit,qty_ordered,price,vat) values (o.id,p.id,p.name,p.unit,l.qty,p.price,p.vat);
+        n := n+1;
+      end if;
+    end if;
+  end loop;
+  if n=0 then raise exception 'Commande vide'; end if;
+  perform _notify_push((case when o.urgent then 'URGENT · ' else 'Nouvelle commande · ' end)||rname,
+    n||case when n=1 then ' produit à préparer' else ' produits à préparer' end||E'\n'||'Livraison '||jours[extract(isodow from o.delivery_date)::int]||' '||to_char(o.delivery_date,'DD.MM')
+      ||case when p_by='Automatique' then ' · commande automatique' when coalesce(p_by,'')<>'' then ' · commandé par '||p_by else '' end,
+    'order-'||o.id);
+  return jsonb_build_object('id',o.id,'number',o.number,'delivery_date',o.delivery_date);
+end $$;
+grant execute on function place_order(text, jsonb, boolean, text, text, text, timestamptz, timestamptz) to anon, authenticated;
+
+drop function if exists depot_arrive(text, bigint, timestamptz);
+create or replace function depot_arrive(p_pin text, p_order bigint, p_at timestamptz default null, p_now timestamptz default null) returns void language plpgsql security definer set search_path=public as $$
+begin perform _need('depot',p_pin);
+  update orders set departed_at=coalesce(departed_at,_acted(p_at+_skew(p_now))), arrived_at=_acted(p_at+_skew(p_now)) where id=p_order and status='delivered' and arrived_at is null; end $$;
+grant execute on function depot_arrive(text, bigint, timestamptz, timestamptz) to anon, authenticated;
