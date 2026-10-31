@@ -143,14 +143,17 @@ grant execute on function depot_move(text, text, text, numeric, text, text, text
 
 create or replace function admin_import_products(p_pin text, p_rows jsonb) returns jsonb
 language plpgsql security definer set search_path=public as $$
-declare r jsonb; pid text; isnew boolean; cur products; created int:=0; updated int:=0; stockfix int:=0; errs jsonb:='[]'; ids jsonb:='[]'; cat text; v_ean text; n int:=0; mid bigint;
+declare r jsonb; pid text; isnew boolean; cur products; created int:=0; updated int:=0; stockfix int:=0; errs jsonb:='[]'; ids jsonb:='[]'; cat text; v_ean text; n int:=0; mid bigint; v_c text;
 begin perform _need('admin',p_pin);
   for r in select * from jsonb_array_elements(p_rows) loop
     n := n+1;
     begin
       if coalesce(trim(r->>'name'),'')='' then raise exception 'nom vide'; end if;
       cat := coalesce((select id from categories where id=r->>'cat' or lower(regexp_replace(label,'^\S+\s',''))=lower(trim(r->>'cat')) or lower(label)=lower(trim(r->>'cat')) limit 1),'');
+      v_c := cat;
       pid := nullif(trim(coalesce(r->>'id','')),'');
+      -- ligne sans ID : un produit du même nom existe déjà (réimport) -> on le met à jour au lieu de le recréer
+      if pid is null then select id into pid from products where lower(trim(name))=lower(trim(r->>'name')) and (v_c='' or products.cat=v_c) order by active desc, id limit 1; end if;
       select * into cur from products where id=pid;
       isnew := cur.id is null;
       if isnew and cat='' then raise exception 'catégorie inconnue « % »', coalesce(r->>'cat',''); end if;
@@ -352,3 +355,37 @@ create or replace function depot_arrive(p_pin text, p_order bigint, p_at timesta
 declare arr timestamptz := _acted(p_at+_skew(p_now));
 begin perform _need('depot',p_pin);
   update orders set departed_at=least(coalesce(departed_at,arr),arr), arrived_at=arr where id=p_order and status='delivered' and arrived_at is null; end $$;
+
+-- Avoir rejouable sans doublon (réessai après un délai dépassé)
+alter table invoices add column if not exists client_ref text unique;
+drop function if exists admin_credit_note(text, bigint, jsonb, boolean, text);
+create or replace function admin_credit_note(p_pin text, p_invoice bigint, p_lines jsonb, p_restock boolean default false, p_note text default '', p_ref text default null) returns jsonb
+language plpgsql security definer set search_path=public as $$
+declare src invoices; r record; sl jsonb; lines jsonb:='[]'; inv invoices; delivered numeric; credited numeric; q numeric;
+begin perform _need('admin',p_pin);
+  if p_ref is not null then select * into inv from invoices where client_ref=p_ref; if found then return jsonb_build_object('invoice',inv.id,'number',inv.number,'dup',true); end if; end if;
+  select * into src from invoices where id=p_invoice and kind='invoice' for update;
+  if not found then raise exception 'Facture introuvable'; end if;
+  for r in select x->>'product_id' pid, sum(coalesce((x->>'qty')::numeric,0)) qty, max(coalesce(x->>'reason','')) reason
+           from jsonb_array_elements(p_lines) x group by 1 loop
+    continue when r.qty is null or r.qty <= 0;
+    select x into sl from jsonb_array_elements(src.lines) x where x->>'product_id'=r.pid limit 1;
+    continue when sl is null;
+    select coalesce(sum((x->>'qty')::numeric),0) into delivered from jsonb_array_elements(src.lines) x where x->>'product_id'=r.pid;
+    select coalesce(sum((x->>'qty')::numeric),0) into credited from invoices c, jsonb_array_elements(c.lines) x
+      where c.ref_invoice=src.id and c.kind='credit' and x->>'product_id'=r.pid;
+    q := least(r.qty, delivered - credited);
+    continue when q <= 0;
+    lines := lines || jsonb_build_object('product_id',r.pid,'name',sl->>'name','unit',sl->>'unit','qty',q,'price',(sl->>'price')::numeric,'vat',(sl->>'vat')::numeric,'reason',r.reason);
+    if p_restock then
+      update products set stock=stock+q where id=r.pid;
+      insert into stock_moves(product_id,kind,qty,reason,ref) values (r.pid,'credit',q,'Retour (avoir)',src.number);
+      insert into lots(product_id,lot,expiry,qty,supplier) values (r.pid,'Retour '||src.number,null,q,'Avoir');
+    end if;
+  end loop;
+  if jsonb_array_length(lines)=0 then raise exception 'Rien à créditer : ces produits ont déjà été entièrement crédités'; end if;
+  inv := _make_invoice('credit',src.order_id,src.resto_id,lines,src.id,coalesce(nullif(p_note,''),'Avoir sur facture '||src.number));
+  if p_ref is not null then update invoices set client_ref=p_ref where id=inv.id; end if;
+  return jsonb_build_object('invoice',inv.id,'number',inv.number);
+end $$;
+grant execute on function admin_credit_note(text, bigint, jsonb, boolean, text, text) to anon, authenticated;
