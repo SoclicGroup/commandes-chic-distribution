@@ -743,7 +743,7 @@ const uuid=()=>(window.crypto&&crypto.randomUUID?crypto.randomUUID():Date.now().
 const isNetErr=e=>!navigator.onLine||!!(e&&!e.code&&/fetch|network|load failed|timeout|abort/i.test(e.message||String(e)));
 /* Erreur « métier » définitive (refus explicite du serveur) : la seule qui retire un élément de la file */
 const isBizErr=e=>!!(e&&e.code&&(e.code==="P0001"||/^2[23]/.test(e.code)));
-function enqueue(fn,args,label){if(["depot_inventory","place_order","depot_deliver","depot_move","depot_arrive"].includes(fn)&&args&&!args.p_at)args={...args,p_at:new Date().toISOString()};OUT.push({id:uuid(),fn,args,label,at:Date.now()});LS.set("outbox",OUT);netBadge()}
+function enqueue(fn,args,label){if(["depot_inventory","place_order","depot_deliver","depot_move","depot_arrive","depot_depart"].includes(fn)&&args&&!args.p_at)args={...args,p_at:new Date().toISOString()};OUT.push({id:uuid(),fn,args,label,at:Date.now()});LS.set("outbox",OUT);netBadge()}
 async function call(fn,args,label){if(!navigator.onLine){enqueue(fn,args,label);return{queued:true}}
   try{return await rpc(fn,args)}catch(e){if(isNetErr(e)){enqueue(fn,args,label);return{queued:true}}throw e}}
 let flushing=false;
@@ -797,7 +797,7 @@ async function checkReminder(){const cfg=S.reminder||{};if(S.mode!=="resto"||cfg
   if(OUT.some(x=>x.fn==="place_order"&&x.args.p_resto===S.resto))return;
   if(autoCoversNext())return;
   try{const{data,error}=await sb.from("orders").select("id").eq("resto_id",S.resto).eq("delivery_date",nd).limit(1);if(!error&&data&&data.length){LS.set("ordered_"+S.resto,nd);return}}catch(e){}
-  if(!remEl&&S.mode==="resto"&&!cartCount()&&S.view!=="r_cart")showReminder()}
+  if(!remEl&&S.mode==="resto"&&S.view!=="r_cart"&&!(S.lastCartAt&&Date.now()-S.lastCartAt<5*60000))showReminder()}
 function showReminder(){const ring=()=>{beep(988,.15);setTimeout(()=>beep(784,.15),230);setTimeout(()=>beep(988,.22),460)};ring();const iv=setInterval(ring,15000);
   const close=()=>{clearInterval(iv);if(remEl)remEl.remove();remEl=null};
   remEl=h("div",{class:"remind"},h("div",{class:"box"},h("div",{class:"bell"},"🔔"),h("h1",{style:"margin-bottom:8px"},t("remind_title")),
@@ -870,7 +870,7 @@ VIEWS.setup=function(step){
    ========================================================= */
 function cartCount(){return Object.values(S.cart).filter(v=>v>0).length}
 function cartTotal(){return Object.entries(S.cart).reduce((a,[id,q])=>a+num(q)*num(P(id)?.price),0)}
-function setQty(id,q){q=Math.max(0,Math.round(num(q)*100)/100);if(q>0)S.cart[id]=q;else delete S.cart[id];LS.set("cart",S.cart)}
+function setQty(id,q){S.lastCartAt=Date.now();q=Math.max(0,Math.round(num(q)*100)/100);if(q>0)S.cart[id]=q;else delete S.cart[id];LS.set("cart",S.cart)}
 function coverDays(d){let n=1,x=addDays(d,1);for(let i=0;i<10&&isClosed(x);i++){n++;x=addDays(x,1)}return n}
 const normalCover=d=>dowOf(d)===5?3:1;
 const boostFactor=()=>{const d=nextDelivery();return coverDays(d)/normalCover(d)};
@@ -1045,7 +1045,7 @@ VIEWS.d_orders=async function(){
   const td=zurichToday();
   const[a,b]=await Promise.all([sb.from("orders").select("*,order_lines(*)").in("status",["new","preparing"]),sb.from("orders").select("*,order_lines(id,qty_ordered,qty_delivered)").eq("status","delivered").gte("delivered_at",zts(addDays(td,-1))).order("delivered_at",{ascending:false})]);
   if(S.view!=="d_orders")return;
-  if(b.data)b.data=b.data.filter(o=>!o.departed_at||zurichDay(o.delivered_at)===td);
+  if(b.data){const qd=new Set(OUT.filter(x=>x.fn==="depot_depart").flatMap(x=>x.args.p_orders||[]));b.data=b.data.filter(o=>!o.departed_at||zurichDay(o.delivered_at)===td).map(o=>qd.has(o.id)&&!o.departed_at?{...o,departed_at:new Date().toISOString()}:o)}
   if(a.error)a.data=LS.get("dopen",[]);else LS.set("dopen",a.data);
   const queuedDel=new Set(OUT.filter(x=>x.fn==="depot_deliver").map(x=>x.args.p_order));
   const open=(a.data||[]).filter(o=>!queuedDel.has(o.id)).sort((x,y)=>(y.urgent-x.urgent)||x.delivery_date.localeCompare(y.delivery_date)||x.created_at.localeCompare(y.created_at));

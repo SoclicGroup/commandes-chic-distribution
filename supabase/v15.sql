@@ -339,3 +339,16 @@ create or replace function depot_arrive(p_pin text, p_order bigint, p_at timesta
 begin perform _need('depot',p_pin);
   update orders set departed_at=coalesce(departed_at,_acted(p_at+_skew(p_now))), arrived_at=_acted(p_at+_skew(p_now)) where id=p_order and status='delivered' and arrived_at is null; end $$;
 grant execute on function depot_arrive(text, bigint, timestamptz, timestamptz) to anon, authenticated;
+
+-- Départ du livreur : heure réelle si mis en file hors ligne ; un départ ne peut pas être après l'arrivée
+drop function if exists depot_depart(text, bigint[]);
+create or replace function depot_depart(p_pin text, p_orders bigint[], p_at timestamptz default null, p_now timestamptz default null) returns int language plpgsql security definer set search_path=public as $$
+declare n int; t timestamptz := _acted(p_at+_skew(p_now));
+begin perform _need('depot',p_pin);
+  update orders set departed_at=least(t, coalesce(arrived_at,t)) where id = any(p_orders) and status='delivered' and departed_at is null;
+  get diagnostics n = row_count; return n; end $$;
+grant execute on function depot_depart(text, bigint[], timestamptz, timestamptz) to anon, authenticated;
+create or replace function depot_arrive(p_pin text, p_order bigint, p_at timestamptz default null, p_now timestamptz default null) returns void language plpgsql security definer set search_path=public as $$
+declare arr timestamptz := _acted(p_at+_skew(p_now));
+begin perform _need('depot',p_pin);
+  update orders set departed_at=least(coalesce(departed_at,arr),arr), arrived_at=arr where id=p_order and status='delivered' and arrived_at is null; end $$;
