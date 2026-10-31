@@ -109,7 +109,7 @@ begin perform _need('depot',p_pin);
     coalesce(p_by,''),p_ref,acted);
   if p_kind='in' then
     insert into lots(product_id,lot,expiry,qty,supplier,received_at) values (p_product,left(coalesce(p_lot,''),40),p_expiry,p_qty,left(coalesce(p_reason,''),60),acted);
-    if counted then perform _reconcile_lots(p_product); end if;
+    if counted then perform _reconcile_lots(p_product, mid); end if;
   elsif not counted then
     perform _consume_lots(p_product,p_qty,null,'loss');
   else
@@ -143,7 +143,7 @@ grant execute on function depot_move(text, text, text, numeric, text, text, text
 
 create or replace function admin_import_products(p_pin text, p_rows jsonb) returns jsonb
 language plpgsql security definer set search_path=public as $$
-declare r jsonb; pid text; isnew boolean; cur products; created int:=0; updated int:=0; stockfix int:=0; errs jsonb:='[]'; ids jsonb:='[]'; cat text; v_ean text; n int:=0;
+declare r jsonb; pid text; isnew boolean; cur products; created int:=0; updated int:=0; stockfix int:=0; errs jsonb:='[]'; ids jsonb:='[]'; cat text; v_ean text; n int:=0; mid bigint;
 begin perform _need('admin',p_pin);
   for r in select * from jsonb_array_elements(p_rows) loop
     n := n+1;
@@ -168,8 +168,8 @@ begin perform _need('admin',p_pin);
         insert into product_costs values (pid,(r->>'cost')::numeric) on conflict (product_id) do update set cost=excluded.cost;
       elsif isnew then insert into product_costs values (pid,0) on conflict do nothing; end if;
       if r ? 'stock' and r->>'stock' is not null and (r->>'stock')::numeric <> coalesce(cur.stock,0) then
-        insert into stock_moves(product_id,kind,qty,reason,by_name) values (pid,'inventory',(r->>'stock')::numeric-coalesce(cur.stock,0),'Import Excel','Admin');
-        update products set stock=(r->>'stock')::numeric where id=pid; perform _reconcile_lots(pid); stockfix := stockfix+1;
+        insert into stock_moves(product_id,kind,qty,reason,by_name) values (pid,'inventory',(r->>'stock')::numeric-coalesce(cur.stock,0),'Import Excel','Admin') returning id into mid;
+        update products set stock=(r->>'stock')::numeric where id=pid; perform _reconcile_lots(pid, mid); stockfix := stockfix+1;
       end if;
       if isnew then created:=created+1; ids := ids || jsonb_build_object('row',coalesce((r->>'_row')::int,n),'id',pid); else updated:=updated+1; end if;
     exception when others then
