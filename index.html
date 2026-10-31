@@ -382,8 +382,9 @@ a.btn{text-decoration:none}
 "use strict";
 const CONFIG={SUPABASE_URL:"https://snwqtnszdasofgzropma.supabase.co",SUPABASE_KEY:"sb_publishable_039BW7PJ3iklMV-064jytA_1fI0e630"};
 const fetchR=async(u,o)=>{const m=((o&&o.method)||"GET").toUpperCase(),safe=m==="GET"||m==="HEAD";for(let i=0;;i++){
-  try{const r=await fetch(u,o);if(safe&&(r.status===503||r.status===520)&&i<2&&navigator.onLine){await new Promise(z=>setTimeout(z,700*(i+1)));continue}return r}
-  catch(e){if(safe&&i<2&&navigator.onLine&&!(o&&o.signal&&o.signal.aborted)){await new Promise(z=>setTimeout(z,700*(i+1)));continue}throw e}}};
+  const ac=new AbortController();let late=false;const tm=setTimeout(()=>{late=true;ac.abort()},safe?15000:25000);if(o&&o.signal){if(o.signal.aborted)ac.abort();else o.signal.addEventListener("abort",()=>ac.abort(),{once:true})}
+  try{const r=await fetch(u,{...(o||{}),signal:ac.signal});clearTimeout(tm);if(safe&&(r.status===503||r.status===520)&&i<2&&navigator.onLine){await new Promise(z=>setTimeout(z,700*(i+1)));continue}return r}
+  catch(e){clearTimeout(tm);if(late)throw new TypeError("network timeout");if(safe&&i<2&&navigator.onLine&&!(o&&o.signal&&o.signal.aborted)){await new Promise(z=>setTimeout(z,700*(i+1)));continue}throw e}}};
 const sb=supabase.createClient(CONFIG.SUPABASE_URL,CONFIG.SUPABASE_KEY,{auth:{persistSession:false},db:{retry:false},global:{fetch:fetchR}});
 
 /* ---------- Traductions ---------- */
@@ -504,7 +505,7 @@ function unlockAudio(){try{actx=actx||new(window.AudioContext||window.webkitAudi
 document.addEventListener("visibilitychange",()=>{if(!document.hidden){try{actx&&actx.state==="suspended"&&actx.resume()}catch(e){}if(S.mode==="resto")checkReminder();flush()}});
 function beep(f=880,d=.1){try{actx=actx||new(window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),g=actx.createGain();o.frequency.value=f;o.connect(g);g.connect(actx.destination);g.gain.setValueAtTime(.15,actx.currentTime);g.gain.exponentialRampToValueAtTime(.001,actx.currentTime+d);o.start();o.stop(actx.currentTime+d)}catch(e){}}
 const SRV_ERR={"Commande vide":"srv_empty","Commande déjà livrée":"srv_done","Quantité invalide":"srv_qty","Prénom obligatoire":"need_name","PIN incorrect":"wrong_pin","Commande introuvable":"srv_nf"};
-function errMsg(e){if(e&&!e.code&&/failed to fetch|networkerror|load failed/i.test(e.message||""))return t("net_err");if(e&&/^PGRST0/.test(e.code||""))return t("srv_busy");const m=(e&&(e.message||e.error_description))||String(e);return SRV_ERR[m]?t(SRV_ERR[m]):m}
+function errMsg(e){if(e&&!e.code&&/failed to fetch|networkerror|load failed/i.test(e.message||""))return t("net_err");if(e&&(/^PGRST0/.test(e.code||"")||(!e.code&&/^\s*<|<html/i.test(e.message||""))))return t("srv_busy");const m=(e&&(e.message||e.error_description))||String(e);return SRV_ERR[m]?t(SRV_ERR[m]):m}
 /* Lecture complète par pages de 1000 (limite Supabase) */
 async function allRows(mk){let out=[];for(let i=0;i<200000;i+=1000){const{data,error}=await mk().range(i,i+999);if(error)throw error;out=out.concat(data||[]);if(!data||data.length<1000)break}return{data:out}}
 async function rpcRaw(fn,args){const{data,error}=await sb.rpc(fn,args);if(error)throw error;return data}
@@ -708,8 +709,9 @@ async function importProductsXLSX(file){try{const X=await loadXLSX();const wb=X.
     h("div",{class:"row"},h("button",{class:"btn light",style:"flex:1",onclick:()=>s.close()},t("cancel")),h("button",{class:"btn acc",style:"flex:1.4",onclick:async e=>{e.currentTarget.disabled=true;
       try{const res=await rpc("admin_import_products",{p_pin:S.adminPin,p_rows:rows});
         const newIds=Object.fromEntries((res.ids||[]).map(x=>[x.row,x.id]));const parRows=[];for(const r of rows){const pid=r.id&&P(r.id)?r.id:newIds[r._row];if(r._par&&pid)for(const[rid,par]of Object.entries(r._par))parRows.push({resto_id:rid,product_id:pid,par})}
-        if(parRows.length){await rpc("admin_set_par",{p_pin:S.adminPin,p_rows:parRows});res.pars=parRows.length}await loadPars();s.close();await loadBase();await loadCosts();refresh();
+        if(parRows.length){try{await rpc("admin_set_par",{p_pin:S.adminPin,p_rows:parRows});res.pars=parRows.length}catch(pe){res.parsErr=errMsg(pe)}}await loadPars();s.close();await loadBase();await loadCosts();refresh();
         const s2=sheet("Import terminé",h("div",{},h("div",{class:"kpis",style:"grid-template-columns:1fr 1fr 1fr"},h("div",{class:"kpi"},h("small",{},"Modifiés"),h("b",{},res.updated)),h("div",{class:"kpi"},h("small",{},"Créés"),h("b",{},res.created)),h("div",{class:"kpi"},h("small",{},"Stocks corrigés"),h("b",{},res.stock))),
+          res.parsErr?h("p",{class:"small b",style:"color:var(--bad)"},"⚠️ Produits importés, mais les stocks de base n'ont pas été enregistrés ("+res.parsErr+"). Réimportez le même fichier : les produits existants seront seulement mis à jour."):null,
           res.pars?h("p",{class:"muted small"},"✓ "+res.pars+" stocks de base enregistrés"):null,
           res.errors.length?h("div",{class:"card",style:"background:var(--bad-s);margin-bottom:12px"},h("div",{class:"b",style:"margin-bottom:6px"},res.errors.length+" ligne(s) ignorée(s)"),res.errors.slice(0,20).map(x=>h("div",{class:"small"},"Ligne "+x.row+(x.name?" · "+x.name:"")+" : "+x.error))):null,
           h("button",{class:"btn acc w",onclick:()=>s2.close()},t("close"))))}catch(err){toast(errMsg(err),"bad")}}},"Importer"))));
@@ -848,7 +850,8 @@ function pinPad(roles,onOk,title,opts){
   let code="";const dots=h("div",{class:"pin"});const draw=()=>dots.replaceChildren(...[0,1,2,3].map(i=>h("i",{class:i<code.length?"on":""})));draw();
   let busy=false;
   const press=async k=>{if(busy)return;if(k==="del"){code=code.slice(0,-1);draw();return}if(code.length>=4)return;code+=k;draw();if(code.length===4){busy=true;
-    for(const r of roles){try{if(await rpc("check_pin",{p_role:r,p_pin:code})){s.close();onOk(code,r);return}}catch(e){}}
+    let netE=null;for(const r of roles){try{if(await rpc("check_pin",{p_role:r,p_pin:code})){s.close();onOk(code,r);return}}catch(e){if(isNetErr(e)||!e.code||/^PGRST0/.test(e.code))netE=e}}
+    if(netE){busy=false;toast(errMsg(netE),"bad");code="";draw();return}
     busy=false;buzz(false);dots.animate([{transform:"translateX(-8px)"},{transform:"translateX(8px)"},{transform:"none"}],{duration:240});toast(t("wrong_pin"),"bad");code="";draw()}};
   const s=sheet(title||t("pin"),h("div",{style:"text-align:center"},dots,h("div",{class:"pad"},["1","2","3","4","5","6","7","8","9","","0","del"].map(k=>k?h("button",{onclick:()=>press(k)},k==="del"?"⌫":k):h("span")))),opts||{});
 }
@@ -1137,7 +1140,7 @@ VIEWS.d_group=async function(date){
 VIEWS.d_prep=async function(orderId){
   if(!S.prep||S.prep.order.id!==orderId){
     let{data:o,error}=await sb.from("orders").select("*,order_lines(*)").eq("id",orderId).single();
-    if(error&&isNetErr(error))o=LS.get("dopen",[]).find(x=>x.id===orderId);
+    if(error&&(isNetErr(error)||!error.code||/^PGRST0/.test(error.code)))o=LS.get("dopen",[]).find(x=>x.id===orderId);
     if(!o){if(error)toast(errMsg(error),"bad");return go("d_orders")}
     if(o.status==="delivered"){toast(t("st_delivered"));return go("d_orders")}
     if(o.status==="new"&&navigator.onLine)rpc("depot_start",{p_pin:S.depotPin,p_order:o.id,p_by:S.who}).catch(()=>{});
@@ -1420,8 +1423,9 @@ function editProduct(p){
     h("div",{class:"row"},h("button",{class:"btn light",style:"flex:1",onclick:()=>s.close()},t("cancel")),h("button",{class:"btn acc",style:"flex:1.4",onclick:async e=>{
       if(!f.name.value.trim())return f.name.focus();e.currentTarget.disabled=true;
       const data={id:p.id,cat:f.cat.value,name:f.name.value.trim(),unit:f.unit.value.trim(),price:Number(String(f.price.value).replace(",","."))||0,vat:Number(f.vat.value),ean:f.ean.value.trim(),min_stock:Number(f.min_stock.value)||0,location:f.location.value.trim(),active,cost:Number(String(f.cost.value).replace(",","."))||0};
-      try{const id=await rpc("admin_save_product",{p_pin:S.adminPin,p:data});S.costs[id]=data.cost;
-        const chg=parIn.filter(([r,i])=>(Number(String(i.value).replace(",","."))||0)!==(parOf(p.id,r.id)||0));if(chg.length){if(!S.parsOk)throw new Error("Stocks de base non chargés : réessayez");await rpc("admin_set_par",{p_pin:S.adminPin,p_rows:chg.map(([r,i])=>({resto_id:r.id,product_id:id,par:Number(String(i.value).replace(",","."))||0}))})}await loadPars();await loadBase();s.close();toast("✓ "+t("saved"),"ok");refresh()}catch(err){e.currentTarget.disabled=false;toast(/unique/.test(errMsg(err))?"Ce code-barres est déjà utilisé":errMsg(err),"bad")}}},t("save")))));
+      try{const chg0=parIn.filter(([r,i])=>(Number(String(i.value).replace(",","."))||0)!==(parOf(p.id,r.id)||0));if(chg0.length&&!S.parsOk){await loadPars();if(!S.parsOk)throw new Error(t("srv_busy"))}
+        const id=await rpc("admin_save_product",{p_pin:S.adminPin,p:data});p.id=id;data.id=id;S.costs[id]=data.cost;
+        const chg=parIn.filter(([r,i])=>(Number(String(i.value).replace(",","."))||0)!==(parOf(p.id,r.id)||0));if(chg.length){await rpc("admin_set_par",{p_pin:S.adminPin,p_rows:chg.map(([r,i])=>({resto_id:r.id,product_id:id,par:Number(String(i.value).replace(",","."))||0}))})}await loadPars();await loadBase();s.close();toast("✓ "+t("saved"),"ok");refresh()}catch(err){e.currentTarget.disabled=false;toast(/unique/.test(errMsg(err))?"Ce code-barres est déjà utilisé":errMsg(err),"bad")}}},t("save")))));
 }
 function labelsSheet(){
   const noEan=S.products.filter(p=>p.active&&!p.ean);
@@ -1821,7 +1825,7 @@ async function start(){
     start();netBadge();
     loadBase().then(()=>{flush();if(!document.querySelector(".sheet")&&!document.querySelector(".scan")&&document.activeElement?.tagName!=="INPUT")refresh()}).catch(()=>{});
     return}
-  try{await loadBase()}catch(e){return mount(h("div",{class:"empty"},h("div",{class:"e"},"📡"),t("no_conn"),h("br"),h("button",{class:"btn acc",style:"margin-top:16px",onclick:()=>location.reload()},"Réessayer")))}
+  try{await loadBase()}catch(e){return mount(h("div",{class:"empty"},h("div",{class:"e"},"📡"),t("no_conn"),h("br"),h("button",{class:"btn acc",style:"margin-top:16px",onclick:()=>location.reload()},t("retry"))))}
   start();netBadge();flush();
 })();
 if("serviceWorker"in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
