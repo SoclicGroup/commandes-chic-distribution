@@ -161,6 +161,7 @@ begin perform _need('admin',p_pin);
             and (coalesce(trim(r->>'unit'),'')='' or lower(trim(products.unit))=lower(trim(r->>'unit')))
             and not (products.id = any(touched));
         if array_length(cands,1)=1 then pid := cands[1]; end if;
+        if array_length(cands,1)>1 then raise exception 'plusieurs produits « % » : précisez la catégorie ou le conditionnement', trim(r->>'name'); end if;
       end if;
       select * into cur from products where id=pid;
       isnew := cur.id is null;
@@ -376,6 +377,8 @@ begin perform _need('admin',p_pin);
   if p_ref is not null then select * into inv from invoices where client_ref=p_ref; if found then return jsonb_build_object('invoice',inv.id,'number',inv.number,'dup',true); end if; end if;
   select * into src from invoices where id=p_invoice and kind='invoice' for update;
   if not found then raise exception 'Facture introuvable'; end if;
+  -- revérifié après le verrou : un premier envoi identique a pu se terminer entre-temps
+  if p_ref is not null then select * into inv from invoices where client_ref=p_ref; if found then return jsonb_build_object('invoice',inv.id,'number',inv.number,'dup',true); end if; end if;
   for r in select x->>'product_id' pid, sum(coalesce((x->>'qty')::numeric,0)) qty, max(coalesce(x->>'reason','')) reason
            from jsonb_array_elements(p_lines) x group by 1 loop
     continue when r.qty is null or r.qty <= 0;

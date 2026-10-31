@@ -702,7 +702,7 @@ async function importProductsXLSX(file){try{const X=await loadXLSX();const wb=X.
       else o[f]=String(v).trim()}
     if(!empty)rows.push(o)});
   if(!rows.length)return toast("Fichier vide ou colonnes non reconnues","bad");
-  const known=rows.filter(r=>r.id&&P(r.id)).length;
+  const nm=x=>String(x||"").trim().toLowerCase();const known=rows.filter(r=>(r.id&&P(r.id))||(!r.id&&S.products.filter(p=>p.active&&nm(p.name)===nm(r.name)&&(!r.unit||nm(p.unit)===nm(r.unit))).length===1)).length;
   const s=sheet("Importer "+rows.length+" lignes",h("div",{},h("div",{class:"kpis",style:"grid-template-columns:1fr 1fr"},h("div",{class:"kpi"},h("small",{},"Produits modifiés"),h("b",{},known)),h("div",{class:"kpi"},h("small",{},"Nouveaux produits"),h("b",{},rows.length-known))),
     bad.length?h("div",{class:"card",style:"background:var(--bad-s);margin-bottom:12px"},bad.slice(0,8).map(x=>h("div",{class:"small b"},"⚠️ "+x))):null,
     h("p",{class:"muted small"},"Les cases vides ne changent rien. Le « Stock actuel » rempli corrige le stock (noté comme inventaire)."),
