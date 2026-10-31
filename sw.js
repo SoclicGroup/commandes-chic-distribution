@@ -1,10 +1,16 @@
 // Service worker : ouverture instantanée (cache de l'app) + notifications.
-const V = "cd-v12";
+const V = "cd-v13";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon.svg", "icon-192.png", "apple-touch-icon.png"];
+const LIBS = [
+  "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js",
+  "https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js",
+  "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js",
+  "https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js",
+];
 const CDN = /(cdn\.jsdelivr\.net|unpkg\.com|cdnjs\.cloudflare\.com|fonts\.googleapis\.com|fonts\.gstatic\.com)$/;
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(V).then((c) => c.addAll(SHELL)).catch(() => {}).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(V).then((c) => c.addAll(SHELL).then(() => Promise.all(LIBS.map((u) => c.add(u).catch(() => {}))))).catch(() => {}).then(() => self.skipWaiting()));
 });
 self.addEventListener("activate", (e) => {
   e.waitUntil((async () => {

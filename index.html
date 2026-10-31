@@ -395,7 +395,7 @@ sq:{hello:"Përshëndetje",search:"Kërko një produkt",all:"Të gjitha",usual:"
 const LOCALE={fr:"fr-CH",de:"de-CH",it:"it-CH",en:"en-GB",sq:"sq-AL"};
 
 /* ---------- État ---------- */
-const LS={get(k,d){try{const v=localStorage.getItem("cd_"+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem("cd_"+k,JSON.stringify(v))}catch(e){}},del(k){try{localStorage.removeItem("cd_"+k)}catch(e){}}};
+const LS={get(k,d){try{const v=localStorage.getItem("cd_"+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem("cd_"+k,JSON.stringify(v))}catch(e){try{localStorage.removeItem("cd_photos");localStorage.setItem("cd_"+k,JSON.stringify(v))}catch(e2){if(k==="outbox"&&typeof toast==="function")toast("Mémoire de l'appareil pleine : la file hors ligne n'a pas pu être enregistrée","bad")}}},del(k){try{localStorage.removeItem("cd_"+k)}catch(e){}}};
 const SS={get(k){try{return sessionStorage.getItem("cd_"+k)}catch(e){return null}},set(k,v){try{sessionStorage.setItem("cd_"+k,v)}catch(e){}}};
 const S={mode:LS.get("mode",null),resto:LS.get("resto",null),lang:LS.get("lang","fr"),who:LS.get("who",""),depotPin:LS.get("dpin",""),adminPin:SS.get("apin")||"",
   view:null,cat:"all",q:"",cart:LS.get("cart",{}),products:[],cats:[],restos:[],company:{},orders:[],sugg:{},usual:{},adminTab:"stats",period:"month",costs:{},onScan:null,reminder:{},report:{},last:null,invMail:{},test:{},allPars:LS.get("pars",{}),counts:{},tour:{},autoCfg:{},auto:null,onway:[],stockRules:{},closed:{},announce:{}};
@@ -414,7 +414,7 @@ function textParts(str){if(!EMO_TEST.test(str))return[document.createTextNode(st
     part=part.replace(/\s{2,}/g," ");if(part.trim()||part===" ")out.push(document.createTextNode(part))}
   if(out.length&&out[0].nodeType===3)out[0].textContent=out[0].textContent.replace(/^\s+/,"");
   return out}
-function h(tag,attrs,...kids){const el=document.createElement(tag);if(attrs)for(const[k,v]of Object.entries(attrs)){if(v==null||v===false)continue;if(k.startsWith("on"))el.addEventListener(k.slice(2),v);else if((k==="title"||k==="placeholder"||k==="aria-label")&&typeof v==="string")el.setAttribute(k,v.replace(new RegExp(EMO_SPLIT.source,"gu"),"").trim());else if(k==="class")el.className=v;else if(k==="style")el.style.cssText=v;else if(k==="html")el.innerHTML=v;else el.setAttribute(k,v===true?"":v)}for(const c of kids.flat(9)){if(c==null||c===false)continue;if(c instanceof Node)el.append(c);else el.append(...textParts(String(c)))}return el}
+function h(tag,attrs,...kids){const el=document.createElement(tag);if(attrs)for(const[k,v]of Object.entries(attrs)){if(v==null||v===false)continue;if(k.startsWith("on"))el.addEventListener(k.slice(2),ev=>{try{Object.defineProperty(ev,"currentTarget",{value:el,configurable:true})}catch(_){}return v(ev)});else if((k==="title"||k==="placeholder"||k==="aria-label")&&typeof v==="string")el.setAttribute(k,v.replace(new RegExp(EMO_SPLIT.source,"gu"),"").trim());else if(k==="class")el.className=v;else if(k==="style")el.style.cssText=v;else if(k==="html")el.innerHTML=v;else el.setAttribute(k,v===true?"":v)}for(const c of kids.flat(9)){if(c==null||c===false)continue;if(c instanceof Node)el.append(c);else el.append(...textParts(String(c)))}return el}
 const ICON={
 search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
 cart:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 7h12l-1.2 11.2a2 2 0 0 1-2 1.8H9.2a2 2 0 0 1-2-1.8z"/><path d="M9 7V6a3 3 0 0 1 6 0v1"/></svg>',
@@ -480,6 +480,7 @@ const RCOL={r1:["#E35D0B","#FFF1E6"],r2:["#2F6FDB","#EAF1FD"],r3:["#23924F","#E7
 const initials=s=>{const m=(s||"").match(/\d+/);return m?"CC"+m[0]:(s||"?").slice(0,2).toUpperCase()};
 function dfmt(d,o){return new Intl.DateTimeFormat(LOCALE[S.lang]||"fr-CH",o||{weekday:"long",day:"numeric",month:"long"}).format(typeof d==="string"&&d.length===10?new Date(d+"T12:00:00"):new Date(d))}
 const tfmt=d=>new Intl.DateTimeFormat("fr-CH",{hour:"2-digit",minute:"2-digit"}).format(new Date(d));
+const zurichDay=iso=>new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Zurich"}).format(new Date(iso));
 function zurichToday(){return new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Zurich"}).format(new Date())}
 function addDays(iso,n){const d=new Date(iso+"T12:00:00");d.setDate(d.getDate()+n);return d.toISOString().slice(0,10)}
 const dowOf=iso=>{const d=new Date(iso+"T12:00:00").getDay();return d===0?7:d};
@@ -499,7 +500,7 @@ function unlockAudio(){try{actx=actx||new(window.AudioContext||window.webkitAudi
 ["touchend","click"].forEach(ev=>addEventListener(ev,unlockAudio,{passive:true}));
 document.addEventListener("visibilitychange",()=>{if(!document.hidden){try{actx&&actx.state==="suspended"&&actx.resume()}catch(e){}if(S.mode==="resto")checkReminder();flush()}});
 function beep(f=880,d=.1){try{actx=actx||new(window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),g=actx.createGain();o.frequency.value=f;o.connect(g);g.connect(actx.destination);g.gain.setValueAtTime(.15,actx.currentTime);g.gain.exponentialRampToValueAtTime(.001,actx.currentTime+d);o.start();o.stop(actx.currentTime+d)}catch(e){}}
-function errMsg(e){return (e&&(e.message||e.error_description))||String(e)}
+function errMsg(e){if(e&&!e.code&&/failed to fetch|networkerror|load failed/i.test(e.message||""))return t("net_err");return (e&&(e.message||e.error_description))||String(e)}
 /* Lecture complète par pages de 1000 (limite Supabase) */
 async function allRows(mk){let out=[];for(let i=0;i<200000;i+=1000){const{data,error}=await mk().range(i,i+999);if(error)throw error;out=out.concat(data||[]);if(!data||data.length<1000)break}return{data:out}}
 async function rpcRaw(fn,args){const{data,error}=await sb.rpc(fn,args);if(error)throw error;return data}
@@ -528,17 +529,22 @@ async function loadBase(){
   loadPhotos();loadLots();
 }
 /* Photos des produits (gardées sur l'appareil) */
-let phCache=LS.get("photos",{});
+let phCache=LS.get("photos",{});LS.del("photos");let phLoaded=false;
+const IDB={p:null,db(){return this.p=this.p||new Promise((res,rej)=>{const r=indexedDB.open("cd",1);r.onupgradeneeded=()=>r.result.createObjectStore("kv");r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})},
+  async get(k){try{const db=await this.db();return await new Promise(res=>{const q=db.transaction("kv").objectStore("kv").get(k);q.onsuccess=()=>res(q.result);q.onerror=()=>res(undefined)})}catch(e){return undefined}},
+  async set(k,v){try{const db=await this.db();await new Promise(res=>{const tx=db.transaction("kv","readwrite");tx.objectStore("kv").put(v,k);tx.oncomplete=res;tx.onerror=res})}catch(e){}}};
+const phSave=()=>IDB.set("photos",phCache);
 function photo(id){const c=phCache[id];const p=id&&P(id);return c&&p&&p.photo_v>0&&c.v===p.photo_v?c.d:null}
 function pimg(p){const d=p&&photo(p.id);return d?h("img",{src:d,alt:""}):catEmoji(p&&p.cat)}
 let phBusy=false;
 async function loadPhotos(){if(phBusy)return;phBusy=true;let changed=false;
+  if(!phLoaded){phLoaded=true;const saved=await IDB.get("photos");if(saved)phCache={...saved,...phCache}}
   try{for(const id of Object.keys(phCache)){const p=P(id);if(!p||!(p.photo_v>0)){delete phCache[id];changed=true}}
     const need=S.products.filter(p=>p.photo_v>0&&(!phCache[p.id]||phCache[p.id].v!==p.photo_v)).map(p=>p.id);
     for(let i=0;i<need.length;i+=20){const{data,error}=await sb.from("product_photos").select("product_id,data").in("product_id",need.slice(i,i+20));if(error)break;
       for(const r of data||[]){const p=P(r.product_id);if(p){phCache[r.product_id]={v:p.photo_v,d:r.data};changed=true}}}
   }catch(e){}finally{phBusy=false}
-  if(changed){LS.set("photos",phCache);if(!document.querySelector(".sheet")&&document.activeElement?.tagName!=="INPUT")refresh()}}
+  if(changed){phSave();if(!document.querySelector(".sheet")&&!["INPUT","TEXTAREA"].includes(document.activeElement?.tagName)&&S.view!=="r_cart")refresh()}}
 async function loadPars(){try{let q=sb.from("resto_par").select("resto_id,product_id,par");if(S.mode==="resto")q=q.eq("resto_id",S.resto);const{data,error}=await q;if(error)throw error;
   const o={};for(const r of data||[])(o[r.resto_id]=o[r.resto_id]||{})[r.product_id]=num(r.par);S.allPars=o;LS.set("pars",o)}catch(e){S.allPars=LS.get("pars",{})}}
 const parOf=(pid,rid)=>(((S.allPars||{})[rid||S.resto])||{})[pid]||0;
@@ -615,11 +621,11 @@ function locationsSheet(){const L=allLocs();
     h("button",{class:"btn light w",style:"margin-bottom:10px",onclick:()=>{s.close();slottingSheet()}},"🧭 "+t("slot_title")),
     h("button",{class:"btn acc w",disabled:!L.length,onclick:()=>{s.close();savePDF(locLabelsPDF(L),"etiquettes-emplacements.pdf")}},"🖨️ "+t("loc_labels")+" ("+L.length+")")))}
 /* Rangement conseillé : les produits préparés le plus souvent vont dans les zones rapides */
-Object.assign(T.fr,{slot_deliv:"livraisons",slot_title:"Rangement conseillé",slot_sub:"Selon les préparations des 90 derniers jours",slot_fast:"Zones rapides",slot_fast_sub:"Touchez les emplacements proches de la zone de préparation",slot_near:"À rapprocher",slot_near_sub:"Préparés très souvent mais rangés loin",slot_far:"À éloigner",slot_far_sub:"Rarement préparés mais occupent une zone rapide",slot_top:"Les plus préparés",slot_move:"Déplacer",slot_none:"Aucun emplacement",slot_ok:"Le rangement est déjà optimal",slot_nodata:"Pas encore assez de livraisons",slot_picks:"fois"});
-Object.assign(T.en,{slot_deliv:"deliveries",slot_title:"Suggested layout",slot_sub:"Based on picks over the last 90 days",slot_fast:"Fast zones",slot_fast_sub:"Tap the locations close to the packing area",slot_near:"Move closer",slot_near_sub:"Picked very often but stored far away",slot_far:"Move away",slot_far_sub:"Rarely picked but using a fast zone",slot_top:"Most picked",slot_move:"Move",slot_none:"No location",slot_ok:"Layout is already optimal",slot_nodata:"Not enough deliveries yet",slot_picks:"times"});
-Object.assign(T.de,{slot_deliv:"Lieferungen",slot_title:"Empfohlene Lagerung",slot_sub:"Nach Kommissionierungen der letzten 90 Tage",slot_fast:"Schnelle Zonen",slot_fast_sub:"Tippen Sie auf die Plätze nahe der Packzone",slot_near:"Näher lagern",slot_near_sub:"Sehr oft kommissioniert, aber weit weg",slot_far:"Weiter weg lagern",slot_far_sub:"Selten kommissioniert, belegt aber eine schnelle Zone",slot_top:"Am häufigsten",slot_move:"Verschieben",slot_none:"Kein Platz",slot_ok:"Die Lagerung ist bereits optimal",slot_nodata:"Noch nicht genug Lieferungen",slot_picks:"Mal"});
-Object.assign(T.it,{slot_deliv:"consegne",slot_title:"Disposizione consigliata",slot_sub:"In base ai prelievi degli ultimi 90 giorni",slot_fast:"Zone rapide",slot_fast_sub:"Tocca le ubicazioni vicine alla zona di preparazione",slot_near:"Da avvicinare",slot_near_sub:"Prelevati spesso ma lontani",slot_far:"Da allontanare",slot_far_sub:"Prelevati raramente ma in zona rapida",slot_top:"I più prelevati",slot_move:"Sposta",slot_none:"Nessuna ubicazione",slot_ok:"La disposizione è già ottimale",slot_nodata:"Non ci sono ancora abbastanza consegne",slot_picks:"volte"});
-Object.assign(T.sq,{slot_deliv:"dorëzime",slot_title:"Renditja e këshilluar",slot_sub:"Sipas përgatitjeve të 90 ditëve të fundit",slot_fast:"Zonat e shpejta",slot_fast_sub:"Prekni vendet afër zonës së përgatitjes",slot_near:"Për t'u afruar",slot_near_sub:"Përgatiten shpesh por janë larg",slot_far:"Për t'u larguar",slot_far_sub:"Përgatiten rrallë por zënë zonë të shpejtë",slot_top:"Më të përgatiturat",slot_move:"Zhvendos",slot_none:"Pa vend",slot_ok:"Renditja është tashmë optimale",slot_nodata:"Ende jo mjaft dorëzime",slot_picks:"herë"});
+Object.assign(T.fr,{net_err:"Pas de connexion internet, réessayez",group_auto:"rempli automatiquement dans chaque commande.",credit_k:"Avoir",over_title:"Plus que commandé",over_sub:"Vous livrez plus que la quantité commandée. Vérifiez avant de facturer.",slot_deliv:"livraisons",slot_title:"Rangement conseillé",slot_sub:"Selon les préparations des 90 derniers jours",slot_fast:"Zones rapides",slot_fast_sub:"Touchez les emplacements proches de la zone de préparation",slot_near:"À rapprocher",slot_near_sub:"Préparés très souvent mais rangés loin",slot_far:"À éloigner",slot_far_sub:"Rarement préparés mais occupent une zone rapide",slot_top:"Les plus préparés",slot_move:"Déplacer",slot_none:"Aucun emplacement",slot_ok:"Le rangement est déjà optimal",slot_nodata:"Pas encore assez de livraisons",slot_picks:"fois"});
+Object.assign(T.en,{net_err:"No internet connection, please try again",group_auto:"filled in automatically in each order.",credit_k:"Credit note",over_title:"More than ordered",over_sub:"You are delivering more than ordered. Check before invoicing.",slot_deliv:"deliveries",slot_title:"Suggested layout",slot_sub:"Based on picks over the last 90 days",slot_fast:"Fast zones",slot_fast_sub:"Tap the locations close to the packing area",slot_near:"Move closer",slot_near_sub:"Picked very often but stored far away",slot_far:"Move away",slot_far_sub:"Rarely picked but using a fast zone",slot_top:"Most picked",slot_move:"Move",slot_none:"No location",slot_ok:"Layout is already optimal",slot_nodata:"Not enough deliveries yet",slot_picks:"times"});
+Object.assign(T.de,{net_err:"Keine Internetverbindung, bitte erneut versuchen",group_auto:"wird in jeder Bestellung automatisch ausgefüllt.",credit_k:"Gutschrift",over_title:"Mehr als bestellt",over_sub:"Sie liefern mehr als bestellt. Bitte vor der Rechnung prüfen.",slot_deliv:"Lieferungen",slot_title:"Empfohlene Lagerung",slot_sub:"Nach Kommissionierungen der letzten 90 Tage",slot_fast:"Schnelle Zonen",slot_fast_sub:"Tippen Sie auf die Plätze nahe der Packzone",slot_near:"Näher lagern",slot_near_sub:"Sehr oft kommissioniert, aber weit weg",slot_far:"Weiter weg lagern",slot_far_sub:"Selten kommissioniert, belegt aber eine schnelle Zone",slot_top:"Am häufigsten",slot_move:"Verschieben",slot_none:"Kein Platz",slot_ok:"Die Lagerung ist bereits optimal",slot_nodata:"Noch nicht genug Lieferungen",slot_picks:"Mal"});
+Object.assign(T.it,{net_err:"Nessuna connessione internet, riprovate",group_auto:"compilato automaticamente in ogni ordine.",credit_k:"Nota di credito",over_title:"Più del richiesto",over_sub:"State consegnando più della quantità ordinata. Verificate prima di fatturare.",slot_deliv:"consegne",slot_title:"Disposizione consigliata",slot_sub:"In base ai prelievi degli ultimi 90 giorni",slot_fast:"Zone rapide",slot_fast_sub:"Tocca le ubicazioni vicine alla zona di preparazione",slot_near:"Da avvicinare",slot_near_sub:"Prelevati spesso ma lontani",slot_far:"Da allontanare",slot_far_sub:"Prelevati raramente ma in zona rapida",slot_top:"I più prelevati",slot_move:"Sposta",slot_none:"Nessuna ubicazione",slot_ok:"La disposizione è già ottimale",slot_nodata:"Non ci sono ancora abbastanza consegne",slot_picks:"volte"});
+Object.assign(T.sq,{net_err:"Nuk ka lidhje interneti, provoni përsëri",group_auto:"plotësohet automatikisht në çdo porosi.",credit_k:"Notë krediti",over_title:"Më shumë se porosia",over_sub:"Po dorëzoni më shumë se sasia e porositur. Kontrolloni para faturimit.",slot_deliv:"dorëzime",slot_title:"Renditja e këshilluar",slot_sub:"Sipas përgatitjeve të 90 ditëve të fundit",slot_fast:"Zonat e shpejta",slot_fast_sub:"Prekni vendet afër zonës së përgatitjes",slot_near:"Për t'u afruar",slot_near_sub:"Përgatiten shpesh por janë larg",slot_far:"Për t'u larguar",slot_far_sub:"Përgatiten rrallë por zënë zonë të shpejtë",slot_top:"Më të përgatiturat",slot_move:"Zhvendos",slot_none:"Pa vend",slot_ok:"Renditja është tashmë optimale",slot_nodata:"Ende jo mjaft dorëzime",slot_picks:"herë"});
 async function slotPicks(){const since=new Date(Date.now()-90*864e5).toISOString();
   const{data:os}=await allRows(()=>sb.from("orders").select("id").eq("status","delivered").gte("delivered_at",since).order("id"));
   const ids=(os||[]).map(o=>o.id),ch=[];for(let i=0;i<ids.length;i+=40)ch.push(ids.slice(i,i+40));
@@ -673,9 +679,9 @@ function loadXLSX(){if(window.XLSX)return Promise.resolve(window.XLSX);
 function sheetOf(X,rows,widths){const ws=X.utils.json_to_sheet(rows);if(widths)ws["!cols"]=widths.map(w=>({wch:w}));return ws}
 const XCOLS=["ID","Catégorie","Produit","Conditionnement","Prix vente HT","Prix achat HT","TVA %","Stock minimum","Emplacement","Code-barres","Stock actuel","Actif (oui/non)"];
 async function exportProductsXLSX(){try{const X=await loadXLSX();if(!Object.keys(S.costs).length)await loadCosts();await loadPars();
-  const rows=S.products.map(p=>({"ID":p.id,"Catégorie":catLabel(p.cat),"Produit":p.name,"Conditionnement":p.unit,"Prix vente HT":num(p.price),"Prix achat HT":S.costs[p.id]||0,"TVA %":num(p.vat),"Stock minimum":num(p.min_stock),"Emplacement":p.location||"","Code-barres":p.ean||"","Stock actuel":num(p.stock),"Actif (oui/non)":p.active?"oui":"non",...Object.fromEntries(S.restos.map(r=>["Base "+r.name,parOf(p.id,r.id)||""]))}));
-  const wb=X.utils.book_new();X.utils.book_append_sheet(wb,sheetOf(X,rows,[12,18,42,26,14,14,8,14,13,16,12,14,...S.restos.map(()=>18)]),"Produits");
-  X.utils.book_append_sheet(wb,sheetOf(X,[{"Mode d'emploi":"1. Remplissez les colonnes (prix HT en CHF, TVA 2.6 ou 8.1)."},{"Mode d'emploi":"2. Laissez une case vide pour ne pas la changer. « Stock actuel » vide = stock inchangé."},{"Mode d'emploi":"3. Nouveau produit : laissez ID vide et indiquez une catégorie existante : "+S.cats.map(c=>c.label.replace(/^\S+\s/,"")).join(", ")+"."},{"Mode d'emploi":"4. Colonnes « Base … » : stock de base de chaque restaurant (quantité qu'il doit avoir). 0 = aucun. Le resto compte ce qui reste, l'app calcule la commande."},{"Mode d'emploi":"5. Admin → Produits → Importer Excel."}],[110]),"Mode d'emploi");
+  const rows=S.products.map(p=>({"ID":p.id,"Catégorie":catLabel(p.cat),"Produit":p.name,"Conditionnement":p.unit,"Prix vente HT":num(p.price),"Prix achat HT":S.costs[p.id]||0,"TVA %":num(p.vat),"Stock minimum":num(p.min_stock),"Emplacement":p.location||"","Code-barres":p.ean||"","Stock actuel":"","Stock à l'export (info)":num(p.stock),"Actif (oui/non)":p.active?"oui":"non",...Object.fromEntries(S.restos.map(r=>["Base "+r.name,parOf(p.id,r.id)||""]))}));
+  const wb=X.utils.book_new();X.utils.book_append_sheet(wb,sheetOf(X,rows,[12,18,42,26,14,14,8,14,13,16,12,14,14,...S.restos.map(()=>18)]),"Produits");
+  X.utils.book_append_sheet(wb,sheetOf(X,[{"Mode d'emploi":"1. Remplissez les colonnes (prix HT en CHF, TVA 2.6 ou 8.1)."},{"Mode d'emploi":"2. Laissez une case vide pour ne pas la changer. « Stock actuel » vide = stock inchangé ; remplissez-le seulement pour corriger le stock (la colonne « Stock à l'export » est une simple info)."},{"Mode d'emploi":"3. Nouveau produit : laissez ID vide et indiquez une catégorie existante : "+S.cats.map(c=>c.label.replace(/^\S+\s/,"")).join(", ")+"."},{"Mode d'emploi":"4. Colonnes « Base … » : stock de base de chaque restaurant (quantité qu'il doit avoir). 0 = aucun. Le resto compte ce qui reste, l'app calcule la commande."},{"Mode d'emploi":"5. Admin → Produits → Importer Excel."}],[110]),"Mode d'emploi");
   X.writeFile(wb,"produits-chic-distribution.xlsx")}catch(e){toast(errMsg(e),"bad")}}
 function xnum(v){if(v==null||v==="")return null;if(typeof v==="number")return v;const n=Number(String(v).replace(/[’'\s]/g,"").replace("CHF","").replace(",","."));return isFinite(n)?n:NaN}
 async function importProductsXLSX(file){try{const X=await loadXLSX();const wb=X.read(await file.arrayBuffer(),{type:"array"});const ws=wb.Sheets[wb.SheetNames[0]];
@@ -695,7 +701,7 @@ async function importProductsXLSX(file){try{const X=await loadXLSX();const wb=X.
     h("p",{class:"muted small"},"Les cases vides ne changent rien. Le « Stock actuel » rempli corrige le stock (noté comme inventaire)."),
     h("div",{class:"row"},h("button",{class:"btn light",style:"flex:1",onclick:()=>s.close()},t("cancel")),h("button",{class:"btn acc",style:"flex:1.4",onclick:async e=>{e.currentTarget.disabled=true;
       try{const res=await rpc("admin_import_products",{p_pin:S.adminPin,p_rows:rows});
-        const parRows=[];for(const r of rows)if(r._par&&r.id&&P(r.id))for(const[rid,par]of Object.entries(r._par))parRows.push({resto_id:rid,product_id:r.id,par});
+        const newIds=Object.fromEntries((res.ids||[]).map(x=>[x.row,x.id]));const parRows=[];for(const r of rows){const pid=r.id&&P(r.id)?r.id:newIds[r._row];if(r._par&&pid)for(const[rid,par]of Object.entries(r._par))parRows.push({resto_id:rid,product_id:pid,par})}
         if(parRows.length){await rpc("admin_set_par",{p_pin:S.adminPin,p_rows:parRows});res.pars=parRows.length}await loadPars();s.close();await loadBase();await loadCosts();refresh();
         const s2=sheet("Import terminé",h("div",{},h("div",{class:"kpis",style:"grid-template-columns:1fr 1fr 1fr"},h("div",{class:"kpi"},h("small",{},"Modifiés"),h("b",{},res.updated)),h("div",{class:"kpi"},h("small",{},"Créés"),h("b",{},res.created)),h("div",{class:"kpi"},h("small",{},"Stocks corrigés"),h("b",{},res.stock))),
           res.pars?h("p",{class:"muted small"},"✓ "+res.pars+" stocks de base enregistrés"):null,
@@ -736,7 +742,7 @@ const uuid=()=>(window.crypto&&crypto.randomUUID?crypto.randomUUID():Date.now().
 const isNetErr=e=>!navigator.onLine||!!(e&&!e.code&&/fetch|network|load failed|timeout|abort/i.test(e.message||String(e)));
 /* Erreur « métier » définitive (refus explicite du serveur) : la seule qui retire un élément de la file */
 const isBizErr=e=>!!(e&&e.code&&(e.code==="P0001"||/^2[23]/.test(e.code)));
-function enqueue(fn,args,label){if((fn==="depot_inventory"||fn==="place_order")&&args&&!args.p_at)args={...args,p_at:new Date().toISOString()};OUT.push({id:uuid(),fn,args,label,at:Date.now()});LS.set("outbox",OUT);netBadge()}
+function enqueue(fn,args,label){if(["depot_inventory","place_order","depot_deliver","depot_move"].includes(fn)&&args&&!args.p_at)args={...args,p_at:new Date().toISOString()};OUT.push({id:uuid(),fn,args,label,at:Date.now()});LS.set("outbox",OUT);netBadge()}
 async function call(fn,args,label){if(!navigator.onLine){enqueue(fn,args,label);return{queued:true}}
   try{return await rpc(fn,args)}catch(e){if(isNetErr(e)){enqueue(fn,args,label);return{queued:true}}throw e}}
 let flushing=false;
@@ -779,7 +785,7 @@ async function shrink(f,max=420){const url=URL.createObjectURL(f);
     const g=c.getContext("2d");g.fillStyle="#fff";g.fillRect(0,0,c.width,c.height);g.drawImage(img,0,0,c.width,c.height);return c.toDataURL("image/jpeg",.78)}
   finally{URL.revokeObjectURL(url)}}
 async function savePhoto(p,d){const v=await rpc("set_photo",{p_pin:S.depotPin||S.adminPin,p_product:p.id,p_data:d});p.photo_v=v;
-  if(d)phCache[p.id]={v,d};else delete phCache[p.id];LS.set("photos",phCache);toast("✓ "+t("saved"),"ok");refresh()}
+  if(d)phCache[p.id]={v,d};else delete phCache[p.id];phSave();toast("✓ "+t("saved"),"ok");refresh()}
 /* Rappel de commande (tablettes restos) */
 let remTimer=null,remEl=null;
 function startReminder(){clearInterval(remTimer);remTimer=setInterval(checkReminder,60000);setTimeout(checkReminder,3000)}
@@ -980,22 +986,22 @@ VIEWS.r_count=function(){
 };
 VIEWS.r_cart=function(){
   const ids=Object.keys(S.cart).filter(id=>P(id));
-  let urgent=false;const note=h("textarea",{rows:2,placeholder:"…"});
-  const names=LS.get("names",[]);const nameInp=h("input",{placeholder:"Ex. Sara",autocomplete:"off",autocapitalize:"words"});
+  const cm=S.cm=S.cm||{};let urgent=!!cm.urgent;const note=h("textarea",{rows:2,placeholder:"…",oninput:e=>{cm.note=e.target.value}});note.value=cm.note||"";
+  const names=LS.get("names",[]);const nameInp=h("input",{placeholder:"Ex. Sara",autocomplete:"off",autocapitalize:"words",oninput:e=>{cm.name=e.target.value}});nameInp.value=cm.name||"";
   async function send(btn,who){btn.disabled=true;
     try{const all=Object.entries(S.cart).filter(([id])=>P(id));const lines=all.filter(([id])=>!isOut(P(id))).map(([product_id,qty])=>({product_id,qty}));if(!lines.length)throw new Error(t("out_removed"));if(lines.length<all.length)toast(t("out_removed"));
       const ref=LS.get("cartref_"+S.resto,"")||uuid();LS.set("cartref_"+S.resto,ref);
       const r=await call("place_order",{p_resto:S.resto,p_lines:lines,p_urgent:urgent,p_note:note.value.trim(),p_by:who,p_ref:ref,p_at:new Date().toISOString()},t("order")+" · "+R(S.resto).name);LS.set("cartref_"+S.resto,"");
       LS.set("names",[who,...names.filter(x=>x.toLowerCase()!==who.toLowerCase())].slice(0,8));LS.set("ordered_"+S.resto,zurichToday());
-      S.cart={};LS.set("cart",{});buzz(true);go("r_sent",r&&r.queued?{queued:true,delivery_date:nextDelivery()}:r)}catch(err){btn.disabled=false;toast(errMsg(err),"bad")}}
-  const sw=h("div",{class:"sw"});
+      S.cart={};S.cm={};LS.set("cart",{});buzz(true);go("r_sent",r&&r.queued?{queued:true,delivery_date:nextDelivery()}:r)}catch(err){btn.disabled=false;toast(errMsg(err),"bad")}}
+  const sw=h("div",{class:"sw"+(urgent?" on":"")});
   const body=ids.length?[
     h("div",{class:"card"},ids.map(id=>{const p=P(id);return h("div",{class:"lr"},h("div",{class:"em",style:tint(p.cat)},pimg(p)),h("div",{class:"sp"},h("div",{class:"nm"},p.name),h("div",{class:"un"},p.unit+(S.mode!=="resto"&&num(p.price)?" · "+chf(p.price):""))),isOut(p)?h("div",{class:"row",style:"gap:6px"},h("span",{class:"pill bad"},t("out")),h("button",{class:"btn light sm","aria-label":t("cancel"),onclick:()=>{setQty(id,0);refresh()}},"✕")):stepper(id))})),
     h("div",{class:"card",style:"margin-top:12px;display:flex;align-items:center;gap:12px"},h("div",{class:"em",style:"background:var(--acc-s)"},"🚚"),h("div",{},h("div",{class:"un"},t("delivery")),h("div",{class:"b",style:"text-transform:capitalize"},dfmt(nextDelivery())))),
-    h("div",{class:"tgl",style:"margin-top:12px",onclick:()=>{urgent=!urgent;sw.classList.toggle("on",urgent)}},h("div",{class:"em",style:"background:var(--bad-s)"},"⚠️"),h("div",{class:"sp"},h("div",{class:"b"},t("urgent")),h("div",{class:"un"},t("urgent_sub"))),sw),
+    h("div",{class:"tgl",style:"margin-top:12px",onclick:()=>{urgent=!urgent;cm.urgent=urgent;sw.classList.toggle("on",urgent)}},h("div",{class:"em",style:"background:var(--bad-s)"},"⚠️"),h("div",{class:"sp"},h("div",{class:"b"},t("urgent")),h("div",{class:"un"},t("urgent_sub"))),sw),
     h("div",{class:"fld"},h("label",{},t("note")),note),
     S.mode!=="resto"&&cartTotal()>0?h("div",{class:"row",style:"margin:6px 4px 14px"},h("span",{class:"muted b"},t("total_ht")),h("span",{class:"sp"}),h("span",{class:"price",style:"font-size:20px"},chf(cartTotal()))):null,
-    h("div",{class:"fld"},h("label",{},t("your_name")),nameInp,names.length?h("div",{class:"row",style:"gap:6px;flex-wrap:wrap;margin-top:4px"},names.map(nm=>h("button",{class:"pill",style:"height:36px;padding:0 14px;font-size:14px",onclick:()=>{nameInp.value=nm}},nm))):null),
+    h("div",{class:"fld"},h("label",{},t("your_name")),nameInp,names.length?h("div",{class:"row",style:"gap:6px;flex-wrap:wrap;margin-top:4px"},names.map(nm=>h("button",{class:"pill",style:"height:36px;padding:0 14px;font-size:14px",onclick:()=>{nameInp.value=nm;cm.name=nm}},nm))):null),
     h("button",{class:"btn acc w",style:"height:58px;font-size:17px",onclick:e=>{const who=nameInp.value.trim();if(!who){toast(t("need_name"),"bad");nameInp.focus();return}
       const btn=e.currentTarget;btn.disabled=true;dupCheck(()=>{const an=anomalies();if(an.length)return anomalySheet(an,()=>send(btn,who));return send(btn,who)}).finally(()=>{if(document.body.contains(btn)&&!document.querySelector(".ok-anim"))btn.disabled=false})}},t("send_order")+" · "+ids.length+" "+t("items"))
   ]:[h("div",{class:"empty"},h("div",{class:"e"},"🛒"),t("empty_cart"))];
@@ -1036,8 +1042,9 @@ function depotNav(active,badge){return navBar([["d_orders","list",t("orders"),ba
 let pendingCount=0;
 VIEWS.d_orders=async function(){
   const td=zurichToday();
-  const[a,b]=await Promise.all([sb.from("orders").select("*,order_lines(*)").in("status",["new","preparing"]),sb.from("orders").select("*,order_lines(id,qty_ordered,qty_delivered)").eq("status","delivered").gte("delivered_at",zts(td)).order("delivered_at",{ascending:false})]);
+  const[a,b]=await Promise.all([sb.from("orders").select("*,order_lines(*)").in("status",["new","preparing"]),sb.from("orders").select("*,order_lines(id,qty_ordered,qty_delivered)").eq("status","delivered").gte("delivered_at",zts(addDays(td,-1))).order("delivered_at",{ascending:false})]);
   if(S.view!=="d_orders")return;
+  if(b.data)b.data=b.data.filter(o=>!o.departed_at||zurichDay(o.delivered_at)===td);
   if(a.error)a.data=LS.get("dopen",[]);else LS.set("dopen",a.data);
   const queuedDel=new Set(OUT.filter(x=>x.fn==="depot_deliver").map(x=>x.args.p_order));
   const open=(a.data||[]).filter(o=>!queuedDel.has(o.id)).sort((x,y)=>(y.urgent-x.urgent)||x.delivery_date.localeCompare(y.delivery_date)||x.created_at.localeCompare(y.created_at));
@@ -1099,11 +1106,11 @@ VIEWS.d_group=async function(date){
   if(S.view!=="d_group")return;
   open=open.filter(o=>o.delivery_date===date).sort((a,b)=>tourIdx(a.resto_id)-tourIdx(b.resto_id));
   const agg={};for(const o of open)for(const l of o.order_lines||[]){const pp=P(l.product_id);if(!pp||!GRP_CATS.includes(pp.cat))continue;
-    const g=agg[l.product_id]=agg[l.product_id]||{p:pp,total:0,by:{}};g.total+=num(l.qty_ordered);g.by[o.resto_id]=(g.by[o.resto_id]||0)+num(l.qty_ordered)}
+    const g=agg[l.product_id]=agg[l.product_id]||{p:pp,total:0,by:{},ord:{}};g.total+=num(l.qty_ordered);g.by[o.resto_id]=(g.by[o.resto_id]||0)+num(l.qty_ordered);g.ord[o.id]=(g.ord[o.id]||0)+num(l.qty_ordered)}
   const rows=Object.values(agg).sort((a,b)=>GRP_CATS.indexOf(a.p.cat)-GRP_CATS.indexOf(b.p.cat)||(a.p.location||"~~").localeCompare(b.p.location||"~~",undefined,{numeric:true})||a.p.name.localeCompare(b.p.name));
-  const key="picked_"+date,pk=LS.get(key,{});const done=rows.filter(r=>pk[r.p.id]).length;
-  const row=r=>{const on=!!pk[r.p.id],low=num(r.p.stock)<r.total;
-    return h("button",{class:"card",style:"display:flex;gap:12px;align-items:center;padding:12px;width:100%;text-align:left;"+(on?"opacity:.55":""),onclick:()=>{if(on)delete pk[r.p.id];else pk[r.p.id]=true;LS.set(key,pk);buzz(true);refresh()}},
+  const key="picked_"+date,pk=LS.get(key,{});const isOn=r=>{const v=pk[r.p.id];return!!v&&typeof v==="object"&&Object.keys(r.ord).every(id=>v[id]!=null)};const done=rows.filter(isOn).length;
+  const row=r=>{const on=isOn(r),low=num(r.p.stock)<r.total;
+    return h("button",{class:"card",style:"display:flex;gap:12px;align-items:center;padding:12px;width:100%;text-align:left;"+(on?"opacity:.55":""),onclick:()=>{if(on)delete pk[r.p.id];else pk[r.p.id]={...r.ord};LS.set(key,pk);buzz(true);refresh()}},
       h("div",{class:"chk"+(on?" on":"")},on?"✔":""),h("div",{class:"em",style:tint(r.p.cat)},pimg(r.p)),
       h("div",{class:"sp",style:"min-width:0"},h("div",{class:"nm b"},r.p.name),h("div",{class:"un muted small"},r.p.unit),
         h("div",{class:"row",style:"gap:6px;margin-top:6px;flex-wrap:wrap"},r.p.location?h("span",{class:"pill loc"},"📍 "+r.p.location):null,
@@ -1112,8 +1119,8 @@ VIEWS.d_group=async function(date){
       h("div",{style:"text-align:right;min-width:56px"},h("div",{class:"un muted small"},t("ordered")),h("div",{style:"font-size:28px;font-weight:700;line-height:1.1"},qfmt(r.total))))};
   mount(h("div",{class:"back"},h("button",{class:"icbtn",onclick:()=>go("d_orders")},ic("backc")),h("div",{class:"sp"},h("h1",{},t("group_prep")),h("div",{class:"muted small"},t("delivery")+" "+dayLabel(date)+" · "+plural(open.length,"orders_n")))),
     h("div",{class:"card",style:"margin-bottom:12px"},h("div",{class:"row"},h("b",{},done+" / "+rows.length+" "+t("picked").toLowerCase()),h("span",{class:"sp"}),
-      h("button",{class:"btn ghost sm",onclick:()=>{const all=rows.every(r=>pk[r.p.id]);for(const r of rows){if(all)delete pk[r.p.id];else pk[r.p.id]=true}LS.set(key,pk);refresh()}},rows.every(r=>pk[r.p.id])?t("cancel"):t("take_all"))),
-      h("div",{class:"prog"},h("i",{style:`width:${rows.length?done/rows.length*100:0}%`})),h("p",{class:"muted small",style:"margin:8px 0 0"},t("group_sub")+". "+t("picked_grp")+" : rempli automatiquement dans chaque commande.")),
+      h("button",{class:"btn ghost sm",onclick:()=>{const all=rows.every(isOn);for(const r of rows){if(all)delete pk[r.p.id];else pk[r.p.id]={...r.ord}}LS.set(key,pk);refresh()}},rows.every(isOn)?t("cancel"):t("take_all"))),
+      h("div",{class:"prog"},h("i",{style:`width:${rows.length?done/rows.length*100:0}%`})),h("p",{class:"muted small",style:"margin:8px 0 0"},t("group_sub")+". "+t("picked_grp")+" : "+t("group_auto"))),
     rows.length?h("div",{class:"list",style:"padding-bottom:80px"},rows.map(row)):h("div",{class:"empty"},h("div",{class:"e"},"✅"),t("no_orders")),
     h("div",{class:"sticky"},h("button",{class:"btn acc",onclick:()=>go("d_orders")},t("done"))));
 };
@@ -1126,7 +1133,7 @@ VIEWS.d_prep=async function(orderId){
     if(o.status==="new"&&navigator.onLine)rpc("depot_start",{p_pin:S.depotPin,p_order:o.id,p_by:S.who}).catch(()=>{});
     const loc=l=>(P(l.product_id)||{}).location||"";
     const pk=LS.get("picked_"+o.delivery_date,{});
-    S.prep={i:0,order:o,lines:o.order_lines.map(l=>({...l,del:pk[l.product_id]?num(l.qty_ordered):0,grp:!!pk[l.product_id]})).sort((a,b)=>(loc(a)||"~~").localeCompare(loc(b)||"~~",undefined,{numeric:true})||a.name.localeCompare(b.name))};
+    S.prep={i:0,order:o,lines:o.order_lines.map(l=>{const v=pk[l.product_id],g=!!v&&typeof v==="object"&&v[o.id]!=null;return{...l,del:g?Math.min(num(v[o.id]),num(l.qty_ordered)):0,grp:g}}).sort((a,b)=>(loc(a)||"~~").localeCompare(loc(b)||"~~",undefined,{numeric:true})||a.name.localeCompare(b.name))};
   }
   const pr=S.prep,o=pr.order;
   const done=pr.lines.filter(l=>l.del>=num(l.qty_ordered)).length;
@@ -1173,7 +1180,11 @@ function confirmDelivery(){const pr=S.prep,o=pr.order;
     h("div",{class:"row",style:"margin-top:16px"},h("button",{class:"btn light",style:"flex:1",onclick:()=>s.close()},t("back")),h("button",{class:"btn acc",style:"flex:1.4",onclick:e=>doDeliver(e.currentTarget,()=>s.close())},t("confirm")))));
 }
 function nextOpen(pr,i){const L=pr.lines,o=x=>x.del<num(x.qty_ordered);let j=L.findIndex((x,k)=>k>i&&o(x));if(j<0)j=L.findIndex(o);return j<0?i:j}
-async function doDeliver(btn,closeSheet){const pr=S.prep,o=pr.order;if(btn)btn.disabled=true;
+async function doDeliver(btn,closeSheet,force){const pr=S.prep,o=pr.order;
+  const over=pr.lines.filter(l=>num(l.del)>num(l.qty_ordered));
+  if(over.length&&!force){const s=sheet("⚠️ "+t("over_title"),h("div",{},h("p",{class:"muted",style:"margin:-6px 0 12px"},t("over_sub")),h("div",{class:"card",style:"padding:4px 14px;margin-bottom:14px"},over.map(l=>h("div",{class:"lr"},h("div",{class:"sp"},h("div",{class:"nm"},l.name),h("div",{class:"un"},t("ordered")+" "+qfmt(l.qty_ordered))),h("span",{class:"pill bad",style:"font-size:17px"},qfmt(l.del))))),
+    h("div",{class:"row"},h("button",{class:"btn light",style:"flex:1",onclick:()=>s.close()},t("back")),h("button",{class:"btn acc",style:"flex:1.3",onclick:()=>{s.close();doDeliver(btn,closeSheet,true)}},t("its_ok")))));return}
+  if(btn)btn.disabled=true;
   try{const r=await call("depot_deliver",{p_pin:S.depotPin,p_order:o.id,p_lines:pr.lines.map(l=>({line_id:l.id,qty:l.del})),p_by:S.who},t("delivered")+" · "+R(o.resto_id).name);if(closeSheet)closeSheet();S.prep=null;buzz(true);
     if(r&&r.queued){for(const l of pr.lines){const p=P(l.product_id);if(p)p.stock=num(p.stock)-l.del}toast(t("queued"),"ok");return go("d_orders")}
     await loadBase();loadLots();deliveredSheet({...r,order_id:o.id});if(r&&r.invoice)mailInvoice(r.invoice)}catch(err){if(btn)btn.disabled=false;toast(errMsg(err),"bad")}}
@@ -1203,7 +1214,7 @@ function openScanner(title,opts={}){
     h("div",{class:"hd"},h("button",{class:"icbtn",onclick:close},"✕"),h("b",{style:"font-size:17px"},title)),
     h("div",{class:"ft"},last,h("div",{class:"man"},man,h("button",{class:"btn acc",onclick:()=>{handle(man.value);man.value=""}},"OK")),opts.doneLabel?h("button",{class:"btn light w",onclick:close},opts.doneLabel):null));
   document.body.append(ov);
-  function handle(code){code=String(code).trim();if(!code)return;const now=Date.now();if(code===lastCode&&now-lastAt<1500)return;lastCode=code;lastAt=now;
+  function handle(code){code=String(code).trim();if(!code)return;const now=Date.now();if(code===lastCode&&now-lastAt<1500){lastAt=now;return}lastCode=code;lastAt=now;
     if(/^LOC:/i.test(code)){const loc=code.slice(4).trim();buzz(true);
       if(S.view==="d_prep"){last.replaceChildren(h("div",{class:"em",style:"background:var(--blue-s)!important;color:var(--blue)!important"},"📍"),h("div",{class:"sp"},h("div",{class:"b"},loc),h("div",{class:"un muted small"},t("locations"))));return}
       close();if(S.view==="d_inv"){S.invLoc=loc;refresh();return}setTimeout(()=>locationSheet(loc),60);return}
@@ -1247,7 +1258,7 @@ async function productSheet(p){
         d!=null&&d<=3?h("span",{class:"pill "+(d<0?"bad":"acc")},d<0?t("expired"):t("dlc_soon")):null,h("b",{style:"margin-left:8px"},qfmt(l.qty)))}):h("div",{class:"lr muted small"},t("no_lots"))),
     h("div",{class:"b",style:"margin-bottom:6px"},t("history")),h("div",{class:"card",style:"padding:4px 14px"},hist)));
   const{data}=await sb.from("stock_moves").select("*").eq("product_id",p.id).order("created_at",{ascending:false}).limit(25);
-  const K={in:["⬇️",t("stock_in")],out:["🚚",t("delivered")],loss:["🗑️",t("losses")],inventory:["📋",t("inventory")],credit:["↩️","Avoir"]};
+  const K={in:["⬇️",t("stock_in")],out:["🚚",t("delivered")],loss:["🗑️",t("losses")],inventory:["📋",t("inventory")],credit:["↩️",t("credit_k")]};
   hist.replaceChildren(...(data||[]).length?data.map(m=>h("div",{class:"lr"},h("span",{style:"font-size:20px"},K[m.kind][0]),h("div",{class:"sp"},h("div",{class:"b",style:"font-size:14px"},K[m.kind][1]+(m.ref?" · "+m.ref:"")+(m.reason?" · "+m.reason:"")),h("div",{class:"un"},dfmt(m.created_at,{day:"numeric",month:"short"})+" "+tfmt(m.created_at)+(m.by_name?" · "+m.by_name:""))),h("b",{style:num(m.qty)<0?"color:var(--bad)":"color:var(--ok)"},(num(m.qty)>0?"+":"")+qfmt(m.qty)))):[h("div",{class:"lr"},"—")]);
 }
 function moveSheet(p,kind){
