@@ -381,7 +381,7 @@ a.btn{text-decoration:none}
 <script>
 "use strict";
 const CONFIG={SUPABASE_URL:"https://snwqtnszdasofgzropma.supabase.co",SUPABASE_KEY:"sb_publishable_039BW7PJ3iklMV-064jytA_1fI0e630"};
-const sb=supabase.createClient(CONFIG.SUPABASE_URL,CONFIG.SUPABASE_KEY,{auth:{persistSession:false}});
+const sb=supabase.createClient(CONFIG.SUPABASE_URL,CONFIG.SUPABASE_KEY,{auth:{persistSession:false},db:{retry:false}});
 
 /* ---------- Traductions ---------- */
 const LANGS=[["fr","FR"],["de","DE"],["it","IT"],["en","EN"],["sq","SQ"]];
@@ -414,7 +414,7 @@ function textParts(str){if(!EMO_TEST.test(str))return[document.createTextNode(st
     part=part.replace(/\s{2,}/g," ");if(part.trim()||part===" ")out.push(document.createTextNode(part))}
   if(out.length&&out[0].nodeType===3)out[0].textContent=out[0].textContent.replace(/^\s+/,"");
   return out}
-function h(tag,attrs,...kids){const el=document.createElement(tag);if(attrs)for(const[k,v]of Object.entries(attrs)){if(v==null||v===false)continue;if(k.startsWith("on"))el.addEventListener(k.slice(2),ev=>v(new Proxy(ev,{get:(o,q)=>{if(q==="currentTarget")return el;const x=o[q];return typeof x==="function"?x.bind(o):x}})));else if((k==="title"||k==="placeholder"||k==="aria-label")&&typeof v==="string")el.setAttribute(k,v.replace(new RegExp(EMO_SPLIT.source,"gu"),"").trim());else if(k==="class")el.className=v;else if(k==="style")el.style.cssText=v;else if(k==="html")el.innerHTML=v;else el.setAttribute(k,v===true?"":v)}for(const c of kids.flat(9)){if(c==null||c===false)continue;if(c instanceof Node)el.append(c);else el.append(...textParts(String(c)))}return el}
+function h(tag,attrs,...kids){const el=document.createElement(tag);if(attrs)for(const[k,v]of Object.entries(attrs)){if(v==null||v===false)continue;if(k.startsWith("on"))el.addEventListener(k.slice(2),ev=>v(new Proxy(ev,{get:(o,q)=>{if(q==="currentTarget")return el;const x=o[q];return typeof x==="function"?x.bind(o):x},set:(o,q,x)=>{o[q]=x;return true}})));else if((k==="title"||k==="placeholder"||k==="aria-label")&&typeof v==="string")el.setAttribute(k,v.replace(new RegExp(EMO_SPLIT.source,"gu"),"").trim());else if(k==="class")el.className=v;else if(k==="style")el.style.cssText=v;else if(k==="html")el.innerHTML=v;else el.setAttribute(k,v===true?"":v)}for(const c of kids.flat(9)){if(c==null||c===false)continue;if(c instanceof Node)el.append(c);else el.append(...textParts(String(c)))}return el}
 const ICON={
 search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
 cart:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 7h12l-1.2 11.2a2 2 0 0 1-2 1.8H9.2a2 2 0 0 1-2-1.8z"/><path d="M9 7V6a3 3 0 0 1 6 0v1"/></svg>',
@@ -797,7 +797,7 @@ async function checkReminder(){const cfg=S.reminder||{};if(S.mode!=="resto"||cfg
   if(OUT.some(x=>x.fn==="place_order"&&x.args.p_resto===S.resto))return;
   if(autoCoversNext())return;
   try{const{data,error}=await sb.from("orders").select("id").eq("resto_id",S.resto).eq("delivery_date",nd).limit(1);if(!error&&data&&data.length){LS.set("ordered_"+S.resto,nd);return}}catch(e){}
-  if(!remEl&&S.mode==="resto"&&S.view!=="r_cart"&&!(S.lastCartAt&&Date.now()-S.lastCartAt<5*60000))showReminder()}
+  if(!remEl&&S.mode==="resto"&&S.view!=="r_cart"&&S.view!=="r_count"&&!(S.lastCartAt&&Date.now()-S.lastCartAt<5*60000))showReminder()}
 function showReminder(){const ring=()=>{beep(988,.15);setTimeout(()=>beep(784,.15),230);setTimeout(()=>beep(988,.22),460)};ring();const iv=setInterval(ring,15000);
   const close=()=>{clearInterval(iv);if(remEl)remEl.remove();remEl=null};
   remEl=h("div",{class:"remind"},h("div",{class:"box"},h("div",{class:"bell"},"🔔"),h("h1",{style:"margin-bottom:8px"},t("remind_title")),
@@ -1045,6 +1045,7 @@ VIEWS.d_orders=async function(){
   const td=zurichToday();
   const[a,b]=await Promise.all([sb.from("orders").select("*,order_lines(*)").in("status",["new","preparing"]),sb.from("orders").select("*,order_lines(id,qty_ordered,qty_delivered)").eq("status","delivered").gte("delivered_at",zts(addDays(td,-1))).order("delivered_at",{ascending:false})]);
   if(S.view!=="d_orders")return;
+  if(b.error||!b.data)b.data=LS.get("ddone",[]);else LS.set("ddone",b.data);
   if(b.data){const qd=new Set(OUT.filter(x=>x.fn==="depot_depart").flatMap(x=>x.args.p_orders||[]));b.data=b.data.filter(o=>!o.departed_at||zurichDay(o.delivered_at)===td).map(o=>qd.has(o.id)&&!o.departed_at?{...o,departed_at:new Date().toISOString()}:o)}
   if(a.error)a.data=LS.get("dopen",[]);else LS.set("dopen",a.data);
   const queuedDel=new Set(OUT.filter(x=>x.fn==="depot_deliver").map(x=>x.args.p_order));
