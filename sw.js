@@ -1,12 +1,8 @@
 // Service worker : ouverture instantanée (cache de l'app) + notifications.
-const V = "cd-v24";
+const V = "cd-v25";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon.svg", "icon-192.png", "apple-touch-icon.png"];
-const LIBS = [
-  "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js",
-  "https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js",
-  "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js",
-  "https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js",
-];
+// Bibliothèques hébergées avec l'app (même origine : pas de CDN tiers qui pourrait être piraté)
+const LIBS = ["lib/supabase.js", "lib/jspdf.umd.min.js", "lib/qrcode.js", "lib/html5-qrcode.min.js", "lib/xlsx.full.min.js"];
 const CDN = /(cdn\.jsdelivr\.net|unpkg\.com|cdnjs\.cloudflare\.com|fonts\.googleapis\.com|fonts\.gstatic\.com)$/;
 
 self.addEventListener("install", (e) => {

@@ -80,7 +80,8 @@ Deno.serve(async (req: Request) => {
   const { data: keys } = await sb.from("app_private").select("key,value").in("key", ["push_secret", "brevo_key"]);
   const K0 = Object.fromEntries((keys || []).map((r: any) => [r.key, r.value]));
   let ok = !!K0.push_secret && req.headers.get("x-push-secret") === K0.push_secret;
-  if (!ok && body.pin) { const { data } = await sb.rpc("check_pin", { p_role: "admin", p_pin: String(body.pin) }); ok = data === true; }
+  // depuis l'app admin : jeton de session uniquement (un code tapé ici échapperait au blocage des essais)
+  if (!ok && typeof body.pin === "string" && /^T[0-9a-f]{40}$/.test(body.pin)) { const { data } = await sb.rpc("check_pin", { p_role: "admin", p_pin: body.pin }); ok = data === true; }
   if (!ok) return new Response("forbidden", { status: 403, headers: CORS });
 
   const { data: D, error } = await sb.rpc("_resto_report_data", { p_month: body.month || null });
