@@ -18,9 +18,12 @@ create table if not exists cd_sec.sessions(
   resto_id text,
   label text not null default '',
   ip text not null default '',
+  ip_src text not null default '',
   created_at timestamptz not null default now(),
   last_used timestamptz not null default now());
-create table if not exists cd_sec.pin_fails(id bigserial primary key, at timestamptz not null default now(), ip text not null, role text not null);
+create table if not exists cd_sec.pin_fails(id bigserial primary key, at timestamptz not null default now(), ip text not null, role text not null, dev text not null default '');
+-- appareils qui se sont déjà connectés avec le bon code : ils passent même si un inconnu a bloqué les essais
+create table if not exists cd_sec.devices(dev_hash text not null, role text not null, last_ok timestamptz not null default now(), primary key (dev_hash, role));
 create index if not exists pin_fails_at on cd_sec.pin_fails(at);
 create table if not exists cd_sec.sent_alerts(kind text primary key, at timestamptz not null default now());
 
@@ -41,6 +44,16 @@ begin
                        nullif(trim(h->>'x-real-ip'),''), 'inconnue'), 64);
 end $$;
 
+create or replace function cd_sec.ip_src() returns text language plpgsql stable set search_path=public as $$
+declare h json;
+begin
+  begin h := nullif(current_setting('request.headers', true),'')::json; exception when others then h := null; end;
+  if h is null then return 'direct'; end if;
+  return case when coalesce(trim(h->>'cf-connecting-ip'),'')<>'' then 'cf-connecting-ip'
+              when coalesce(trim(split_part(coalesce(h->>'x-forwarded-for',''),',',1)),'')<>'' then 'x-forwarded-for'
+              when coalesce(trim(h->>'x-real-ip'),'')<>'' then 'x-real-ip' else 'aucun' end;
+end $$;
+
 create or replace function cd_sec.idle(p_role text) returns interval language sql immutable set search_path=public as $$
   select case p_role when 'admin' then interval '12 hours' when 'depot' then interval '90 days' else interval '365 days' end $$;
 
@@ -59,7 +72,7 @@ language plpgsql volatile security definer set search_path=public as $$
 declare tok text := 'T'||encode(extensions.gen_random_bytes(20),'hex');
 begin
   delete from cd_sec.sessions where last_used < now() - cd_sec.idle(role);
-  insert into cd_sec.sessions(token_hash, role, resto_id, label, ip) values (cd_sec.hash(tok), p_role, p_resto, left(coalesce(p_label,''),60), cd_sec.client_ip());
+  insert into cd_sec.sessions(token_hash, role, resto_id, label, ip, ip_src) values (cd_sec.hash(tok), p_role, p_resto, left(coalesce(p_label,''),60), cd_sec.client_ip(), cd_sec.ip_src());
   return tok;
 end $$;
 
@@ -116,16 +129,21 @@ begin
 end $$;
 
 -- ---------- Vérification du code (avec blocage) : seulement pour se connecter ----------
-create or replace function _pin_ok(p_role text, p_pin text) returns boolean language plpgsql volatile security definer set search_path=public,extensions as $$
-declare v_ip text := cd_sec.client_ip(); n_ip int; n_all int; ok boolean; t timestamptz; wait int;
+drop function if exists _pin_ok(text, text);
+create or replace function _pin_ok(p_role text, p_pin text, p_dev text default null) returns boolean language plpgsql volatile security definer set search_path=public,extensions as $$
+declare v_ip text := cd_sec.client_ip(); n_ip int; n_all int; n_dev int; ok boolean; t timestamptz; wait int; dh text := ''; known boolean := false;
 begin
   if p_role not in ('admin','depot') then return false; end if;
   if not cd_sec.via_api() then return cd_sec.pin_match(p_role, p_pin); end if;
   perform pg_advisory_xact_lock(7316001);   -- un essai à la fois : le compteur reste juste même avec des essais en parallèle
   delete from cd_sec.pin_fails where at < now() - interval '1 day';
+  if coalesce(p_dev,'') ~ '^D[0-9a-f]{40}$' then dh := cd_sec.hash(p_dev); end if;
   select count(*) filter (where ip=v_ip and at > now() - interval '15 minutes'),
-         count(*) filter (where role=p_role and at > now() - interval '1 hour') into n_ip, n_all from cd_sec.pin_fails;
-  if n_ip >= 5 or n_all >= 30 then
+         count(*) filter (where role=p_role and at > now() - interval '1 hour'),
+         count(*) filter (where dh<>'' and dev=dh and at > now() - interval '1 hour') into n_ip, n_all, n_dev from cd_sec.pin_fails;
+  -- appareil qui s'est déjà connecté avec le bon code (et peu d'erreurs) : le blocage global ne le concerne pas
+  known := dh<>'' and n_dev < 10 and exists(select 1 from cd_sec.devices where dev_hash=dh and role=p_role and last_ok > now() - interval '365 days');
+  if n_ip >= 5 or (n_all >= 30 and not known) then
     if n_ip >= 5 then
       select at + interval '15 minutes' into t from cd_sec.pin_fails where ip=v_ip and at > now() - interval '15 minutes' order by at desc offset 4 limit 1;
     end if;
@@ -136,8 +154,11 @@ begin
     raise exception 'Trop d''essais de code : réessayez dans % min', wait using errcode='PT429';
   end if;
   ok := cd_sec.pin_match(p_role, p_pin);
+  if ok and dh<>'' then
+    insert into cd_sec.devices values (dh, p_role, now()) on conflict (dev_hash, role) do update set last_ok=excluded.last_ok;
+  end if;
   if not ok then
-    insert into cd_sec.pin_fails(ip, role) values (v_ip, p_role);
+    insert into cd_sec.pin_fails(ip, role, dev) values (v_ip, p_role, dh);
     if n_ip + 1 >= 5 or n_all + 1 >= 30 then
       perform cd_sec.alert_once('lock-'||p_role, 'Codes faux répétés ('||case p_role when 'admin' then 'admin' else 'dépôt' end||')',
         'Plusieurs codes faux ont été tapés à la suite : les essais sont bloqués pendant un moment.'||E'\n'||'Si ce n''est ni vous ni votre équipe, quelqu''un essaie de deviner le code : changez-le.');
@@ -146,7 +167,7 @@ begin
   end if;
   return ok;
 end $$;
-revoke all on function _pin_ok(text,text) from public, anon, authenticated;
+revoke all on function _pin_ok(text,text,text) from public, anon, authenticated;
 
 -- Toutes les actions protégées : jeton de session obligatoire depuis le site
 create or replace function _need(p_role text, p_pin text) returns void language plpgsql security definer set search_path=public as $$
@@ -167,22 +188,23 @@ begin
 end $$;
 
 -- ---------- Connexion ----------
-create or replace function check_pin(p_role text, p_pin text) returns boolean language plpgsql volatile security definer set search_path=public as $$
+drop function if exists check_pin(text, text);
+create or replace function check_pin(p_role text, p_pin text, p_dev text default null) returns boolean language plpgsql volatile security definer set search_path=public as $$
 begin
   if coalesce(p_pin,'') ~ '^T[0-9a-f]{40}$' then return cd_sec.session_ok(p_role, p_pin); end if;
-  return _pin_ok(p_role, p_pin);
+  return _pin_ok(p_role, p_pin, p_dev);
 end $$;
 
-create or replace function staff_login(p_role text, p_pin text, p_label text default '') returns text language plpgsql volatile security definer set search_path=public as $$
+create or replace function staff_login(p_role text, p_pin text, p_label text default '', p_dev text default null) returns text language plpgsql volatile security definer set search_path=public as $$
 begin
-  if p_role not in ('admin','depot') or not _pin_ok(p_role, p_pin) then return null; end if;
+  if p_role not in ('admin','depot') or not _pin_ok(p_role, p_pin, p_dev) then return null; end if;
   return cd_sec.new_session(p_role, null, p_label);
 end $$;
 
-create or replace function pair_device(p_pin text, p_resto text, p_label text default '') returns text language plpgsql volatile security definer set search_path=public as $$
+create or replace function pair_device(p_pin text, p_resto text, p_label text default '', p_dev text default null) returns text language plpgsql volatile security definer set search_path=public as $$
 begin
   if not exists(select 1 from restaurants where id=p_resto) then raise exception 'Restaurant inconnu'; end if;
-  if not _pin_ok('depot', p_pin) then return null; end if;     -- code du dépôt ou de l'admin
+  if not _pin_ok('depot', p_pin, p_dev) then return null; end if;     -- code du dépôt ou de l'admin
   return cd_sec.new_session('resto', p_resto, p_label);
 end $$;
 
@@ -329,6 +351,9 @@ begin perform _need('admin',p_pin);
     if a <> b then
       perform cd_sec.alert('IBAN des factures modifié', 'L''IBAN imprimé sur les factures et les QR-factures a été changé.'||E'\n'||'Ancien : '||coalesce(nullif(a,''),'(vide)')||E'\n'||'Nouveau : '||coalesce(nullif(b,''),'(vide)'), array[old->>'email']);
     end if;
+    if lower(trim(coalesce(old->>'email',''))) <> lower(trim(coalesce(p_value->>'email',''))) then
+      perform cd_sec.alert('E-mail de l''entreprise modifié', 'Avant : '||coalesce(nullif(old->>'email',''),'(aucune)')||E'\n'||'Maintenant : '||coalesce(nullif(p_value->>'email',''),'(aucune)'), array[old->>'email']);
+    end if;
   elsif p_key='report' then
     oe := array(select lower(trim(x)) from jsonb_array_elements_text(case when jsonb_typeof(old->'emails')='array' then old->'emails' else '[]'::jsonb end) x where trim(x)<>'' order by 1);
     ne := array(select lower(trim(x)) from jsonb_array_elements_text(case when jsonb_typeof(p_value->'emails')='array' then p_value->'emails' else '[]'::jsonb end) x where trim(x)<>'' order by 1);
@@ -377,5 +402,5 @@ alter default privileges in schema public revoke all on sequences from anon, aut
 revoke execute on function _acted(timestamptz), _b64(text), _chf(numeric), _csv(text), _h(text), _kpi(text,text), _q(numeric), _skew(timestamptz),
   _tbl(text,text[],text), _tr(text[]), easter_date(integer), ge_holidays(integer), is_closed_day(date), next_delivery_date(), next_delivery_from(timestamptz)
   from public, anon, authenticated;
-grant execute on function check_pin(text,text), staff_login(text,text,text), pair_device(text,text,text), logout(text), staff_invoices(text), staff_settings(text),
+grant execute on function check_pin(text,text,text), staff_login(text,text,text,text), pair_device(text,text,text,text), logout(text), staff_invoices(text), staff_settings(text),
   admin_set_pin(text,text,text), admin_security_status(text), admin_sessions(text), admin_revoke_sessions(text,bigint,text) to anon, authenticated;

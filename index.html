@@ -513,6 +513,7 @@ async function rpcRaw(fn,args){const{data,error}=await sb.rpc(fn,args);if(error)
 async function rpc(fn,args){const{data,error}=await sb.rpc(fn,args);if(error){if(error.code==="28000"||/PIN/.test(error.message)){if(S.mode==="resto"&&/^(place_order|resto_)/.test(fn))setTimeout(devLost,300);else{toast(errMsg(error),"bad");if(S.mode==="admin"){S.adminPin="";SS.set("apin","")}else if(S.mode==="depot"&&/^(depot_|set_photo|save_push|staff_|invoice_|send_invoice|admin_test_push)/.test(fn))setTimeout(pinLost,600)}}throw error}return data}
 /* Sessions : le code n'est tapé qu'une fois, l'appareil garde un jeton (révocable par l'admin) */
 const isTok=v=>/^T[0-9a-f]{40}$/.test(v||"");
+function devId(){let d=LS.get("devid",null);if(!/^D[0-9a-f]{40}$/.test(d||"")){const b=new Uint8Array(20);crypto.getRandomValues(b);d="D"+[...b].map(x=>x.toString(16).padStart(2,"0")).join("");LS.set("devid",d)}return d}
 function devLabel(){const u=navigator.userAgent||"";const d=/iPad/.test(u)||(/Macintosh/.test(u)&&navigator.maxTouchPoints>1)?"iPad":/iPhone/.test(u)?"iPhone":/Android/.test(u)?"Android":/Mac/.test(u)?"Mac":/Windows/.test(u)?"PC":"Appareil";return[d,S.mode==="resto"&&S.resto?(R(S.resto).name||S.resto):S.mode==="admin"?"Admin":S.who].filter(Boolean).join(" · ")}
 const staffTok=()=>S.mode==="admin"?S.adminPin:(S.depotPin||S.adminPin);
 const INV=()=>sb.rpc("staff_invoices",{p_pin:staffTok()});
@@ -523,8 +524,8 @@ const pairNeeded=()=>!!(S.security&&S.security.pair!==false);
 const pinLen=r=>{const n=+(S.pinLen&&S.pinLen[r]);return n>=4&&n<=8?n:4};
 /* Codes gardés par l'ancienne version de l'app : échangés contre une session */
 async function upgradeTokens(){
-  if(S.depotPin&&!isTok(S.depotPin)){try{const tk=await rpcRaw("staff_login",{p_role:"depot",p_pin:S.depotPin,p_label:devLabel()});S.depotPin=tk||"";LS.set("dpin",S.depotPin)}catch(e){if(!isNetErr(e)&&e.code!=="PT429"){S.depotPin="";LS.set("dpin","")}}}
-  if(S.adminPin&&!isTok(S.adminPin)){try{const tk=await rpcRaw("staff_login",{p_role:"admin",p_pin:S.adminPin,p_label:devLabel()});S.adminPin=tk||"";SS.set("apin",S.adminPin)}catch(e){if(!isNetErr(e)&&e.code!=="PT429"){S.adminPin="";SS.set("apin","")}}}}
+  if(S.depotPin&&!isTok(S.depotPin)){try{const tk=await rpcRaw("staff_login",{p_role:"depot",p_pin:S.depotPin,p_label:devLabel(),p_dev:devId()});S.depotPin=tk||"";LS.set("dpin",S.depotPin)}catch(e){if(!isNetErr(e)&&e.code!=="PT429"){S.depotPin="";LS.set("dpin","")}}}
+  if(S.adminPin&&!isTok(S.adminPin)){try{const tk=await rpcRaw("staff_login",{p_role:"admin",p_pin:S.adminPin,p_label:devLabel(),p_dev:devId()});S.adminPin=tk||"";SS.set("apin",S.adminPin)}catch(e){if(!isNetErr(e)&&e.code!=="PT429"){S.adminPin="";SS.set("apin","")}}}}
 function secNag(){rpcRaw("admin_security_status",{p_pin:S.adminPin}).then(st=>{if(st&&(st.weak||[]).length)setTimeout(()=>toast("⚠️ Codes trop simples : changez-les dans Réglages → Sécurité","bad"),900)}).catch(()=>{})}
 /* Réglages réservés (adresses e-mail des rapports et de la comptabilité) */
 async function loadPriv(){const tok=staffTok();if(S.mode==="resto"||!isTok(tok))return false;try{const rows=await rpcRaw("staff_settings",{p_pin:tok});applySettings(rows||[]);S.privOk=true;const b=LS.get("base",null);if(b){b.settings=rows||[];LS.set("base",b)}return true}catch(e){return e}}
@@ -699,7 +700,7 @@ async function mailInvoice(id,force){
   catch(e){if(!isNetErr(e))toast("✉️ "+errMsg(e),"bad");return null}}
 let mailBusy=false;
 async function mailPending(){if(mailBusy||!navigator.onLine||(S.invMail&&S.invMail.enabled===false))return;mailBusy=true;
-  try{const since=new Date(Date.now()-35*864e5).toISOString();const{data}=await INV().select("id").is("emailed_at",null).gte("created_at",since).order("id",{ascending:false}).limit(10);
+  try{const since=new Date(Date.now()-35*864e5).toISOString();const{data}=await INV().select("id,emailed_at,created_at").is("emailed_at",null).gte("created_at",since).order("id",{ascending:false}).limit(10);
     for(const r of data||[])await mailInvoice(r.id)}catch(e){}finally{mailBusy=false}}
 /* Excel (SheetJS, chargé à la demande) */
 let xlsxP=null;
@@ -882,7 +883,7 @@ function pinPad(roles,onOk,title,opts){opts=opts||{};
     const chk=roles.includes("depot")?["depot"]:roles; /* le code admin vaut aussi pour le dépôt : un seul essai compté */
     let err=null;
     for(const r of chk){try{
-        const res=opts.verify?await rpcRaw("check_pin",{p_role:r,p_pin:c}):opts.pair?await rpcRaw("pair_device",{p_pin:c,p_resto:opts.pair,p_label:devLabel()}):await rpcRaw("staff_login",{p_role:r,p_pin:c,p_label:devLabel()});
+        const res=opts.verify?await rpcRaw("check_pin",{p_role:r,p_pin:c,p_dev:devId()}):opts.pair?await rpcRaw("pair_device",{p_pin:c,p_resto:opts.pair,p_label:devLabel(),p_dev:devId()}):await rpcRaw("staff_login",{p_role:r,p_pin:c,p_label:devLabel(),p_dev:devId()});
         if(res){s.close();onOk(opts.verify?c:res,r);return}}
       catch(e){if(e&&e.code==="PT429")return fail(e);err=e}}
     fail(err)};
@@ -1706,7 +1707,7 @@ function drawSwissQR(doc,co,amount,debtor,msg,seed){const ref=isQRIban(co.iban)?
 async function invoicePDF(id){
   const{data:inv,error}=await INV().select("*").eq("id",id).single();if(error)throw error;
   let order=null,olines=[];if(inv.order_id){const{data,error:oe}=await sb.from("orders").select("*,order_lines(*)").eq("id",inv.order_id).single();if(oe)throw oe;order=data;olines=(data?.order_lines||[]).sort((a,b)=>a.id-b.id)}
-  let refNum="";if(inv.ref_invoice){const{data,error:re}=await INV().select("number").eq("id",inv.ref_invoice).single();if(re)throw re;refNum=data?.number||""}
+  let refNum="";if(inv.ref_invoice){const{data,error:re}=await INV().select("id,number").eq("id",inv.ref_invoice).single();if(re)throw re;refNum=data?.number||""}
   const co=S.company,rs=R(inv.resto_id),credit=inv.kind==="credit";
   const{jsPDF}=window.jspdf;const doc=new jsPDF({unit:"mm",format:"a4"});
   const OR=[242,140,40],INK=[23,20,15],MU=[130,124,116];
