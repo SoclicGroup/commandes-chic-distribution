@@ -1,6 +1,6 @@
 -- v16 : sécurité
 -- 1. Connexion par session : le code n'est tapé qu'une fois, l'appareil reçoit un jeton (révocable)
--- 2. Essais de code limités (5 par appareil/réseau en 15 min, 30 par heure au total) + alerte
+-- 2. Essais de code limités (5 par réseau en 15 min ; par heure : 30 pour les appareils inconnus, 20 pour les appareils déjà connectés) + alerte
 -- 3. iPad des restaurants activés une fois (code du dépôt ou de l'admin)
 -- 4. Factures et adresses e-mail réservées au dépôt et à l'admin
 -- 5. Codes de 6 à 8 chiffres, pas trop simples, différents entre dépôt et admin
@@ -20,9 +20,13 @@ create table if not exists cd_sec.sessions(
   ip text not null default '',
   ip_src text not null default '',
   created_at timestamptz not null default now(),
-  last_used timestamptz not null default now());
-create table if not exists cd_sec.pin_fails(id bigserial primary key, at timestamptz not null default now(), ip text not null, role text not null, dev text not null default '');
--- appareils qui se sont déjà connectés avec le bon code : ils passent même si un inconnu a bloqué les essais
+  last_used timestamptz not null default now(),
+  dev_hash text not null default '');
+create table if not exists cd_sec.pin_fails(id bigserial primary key, at timestamptz not null default now(), ip text not null, role text not null, dev text not null default '', known boolean not null default false);
+alter table cd_sec.sessions add column if not exists dev_hash text not null default '';
+alter table cd_sec.pin_fails add column if not exists known boolean not null default false;
+-- appareils qui se sont déjà connectés avec le bon code : ils ont leur propre compteur d'essais (un inconnu ne peut pas les bloquer)
+-- oubliés quand le code change ou quand l'admin les déconnecte
 create table if not exists cd_sec.devices(dev_hash text not null, role text not null, last_ok timestamptz not null default now(), primary key (dev_hash, role));
 create index if not exists pin_fails_at on cd_sec.pin_fails(at);
 create table if not exists cd_sec.sent_alerts(kind text primary key, at timestamptz not null default now());
@@ -67,12 +71,14 @@ create or replace function cd_sec.weak_pin(p text) returns boolean language sql 
       or strpos('01234567890123456789', p) > 0 or strpos('98765432109876543210', p) > 0
       or p in ('112233','332211','123321','159753','357951','147258','258369','369258','753951','102030','010203','121314','654456','11223344','12344321') $$;
 
-create or replace function cd_sec.new_session(p_role text, p_resto text, p_label text) returns text
+drop function if exists cd_sec.new_session(text, text, text);
+create or replace function cd_sec.new_session(p_role text, p_resto text, p_label text, p_dev text default null) returns text
 language plpgsql volatile security definer set search_path=public as $$
 declare tok text := 'T'||encode(extensions.gen_random_bytes(20),'hex');
 begin
   delete from cd_sec.sessions where last_used < now() - cd_sec.idle(role);
-  insert into cd_sec.sessions(token_hash, role, resto_id, label, ip, ip_src) values (cd_sec.hash(tok), p_role, p_resto, left(coalesce(p_label,''),60), cd_sec.client_ip(), cd_sec.ip_src());
+  insert into cd_sec.sessions(token_hash, role, resto_id, label, ip, ip_src, dev_hash) values (cd_sec.hash(tok), p_role, p_resto, left(coalesce(p_label,''),60), cd_sec.client_ip(), cd_sec.ip_src(),
+    case when coalesce(p_dev,'') ~ '^D[0-9a-f]{40}$' then cd_sec.hash(p_dev) else '' end);
   return tok;
 end $$;
 
@@ -131,7 +137,7 @@ end $$;
 -- ---------- Vérification du code (avec blocage) : seulement pour se connecter ----------
 drop function if exists _pin_ok(text, text);
 create or replace function _pin_ok(p_role text, p_pin text, p_dev text default null) returns boolean language plpgsql volatile security definer set search_path=public,extensions as $$
-declare v_ip text := cd_sec.client_ip(); n_ip int; n_all int; n_dev int; ok boolean; t timestamptz; wait int; dh text := ''; known boolean := false;
+declare v_ip text := cd_sec.client_ip(); n_ip int; n_unk int; n_kn int; n_dev int; ok boolean; t timestamptz; wait int; dh text := ''; v_known boolean := false;
 begin
   if p_role not in ('admin','depot') then return false; end if;
   if not cd_sec.via_api() then return cd_sec.pin_match(p_role, p_pin); end if;
@@ -139,16 +145,21 @@ begin
   delete from cd_sec.pin_fails where at < now() - interval '1 day';
   if coalesce(p_dev,'') ~ '^D[0-9a-f]{40}$' then dh := cd_sec.hash(p_dev); end if;
   select count(*) filter (where ip=v_ip and at > now() - interval '15 minutes'),
-         count(*) filter (where role=p_role and at > now() - interval '1 hour'),
-         count(*) filter (where dh<>'' and dev=dh and at > now() - interval '1 hour') into n_ip, n_all, n_dev from cd_sec.pin_fails;
-  -- appareil qui s'est déjà connecté avec le bon code (et peu d'erreurs) : le blocage global ne le concerne pas
-  known := dh<>'' and n_dev < 10 and exists(select 1 from cd_sec.devices where dev_hash=dh and role=p_role and last_ok > now() - interval '365 days');
-  if n_ip >= 5 or (n_all >= 30 and not known) then
+         count(*) filter (where role=p_role and not known and at > now() - interval '1 hour'),
+         count(*) filter (where role=p_role and known and at > now() - interval '1 hour'),
+         count(*) filter (where dh<>'' and dev=dh and at > now() - interval '1 hour') into n_ip, n_unk, n_kn, n_dev from cd_sec.pin_fails;
+  -- appareil déjà connecté avec le bon code (et peu d'erreurs) : compteur séparé, qu'un inconnu ne peut pas remplir
+  v_known := dh<>'' and n_dev < 10 and exists(select 1 from cd_sec.devices where dev_hash=dh and role=p_role and last_ok > now() - interval '365 days');
+  -- limites : 5 par réseau en 15 min ; par heure et par rôle, 30 pour les appareils inconnus et 20 pour tous les appareils connus ensemble
+  if n_ip >= 5 or (not v_known and n_unk >= 30) or (v_known and n_kn >= 20) then
     if n_ip >= 5 then
       select at + interval '15 minutes' into t from cd_sec.pin_fails where ip=v_ip and at > now() - interval '15 minutes' order by at desc offset 4 limit 1;
     end if;
-    if n_all >= 30 then
-      t := greatest(t, (select at + interval '1 hour' from cd_sec.pin_fails where role=p_role and at > now() - interval '1 hour' order by at desc offset 29 limit 1));
+    if not v_known and n_unk >= 30 then
+      t := greatest(t, (select at + interval '1 hour' from cd_sec.pin_fails where role=p_role and not known and at > now() - interval '1 hour' order by at desc offset 29 limit 1));
+    end if;
+    if v_known and n_kn >= 20 then
+      t := greatest(t, (select at + interval '1 hour' from cd_sec.pin_fails where role=p_role and known and at > now() - interval '1 hour' order by at desc offset 19 limit 1));
     end if;
     wait := greatest(1, ceil(extract(epoch from (coalesce(t, now() + interval '15 minutes') - now()))/60)::int);
     raise exception 'Trop d''essais de code : réessayez dans % min', wait using errcode='PT429';
@@ -158,8 +169,8 @@ begin
     insert into cd_sec.devices values (dh, p_role, now()) on conflict (dev_hash, role) do update set last_ok=excluded.last_ok;
   end if;
   if not ok then
-    insert into cd_sec.pin_fails(ip, role, dev) values (v_ip, p_role, dh);
-    if n_ip + 1 >= 5 or n_all + 1 >= 30 then
+    insert into cd_sec.pin_fails(ip, role, dev, known) values (v_ip, p_role, dh, v_known);
+    if n_ip + 1 >= 5 or (not v_known and n_unk + 1 >= 30) or (v_known and n_kn + 1 >= 20) then
       perform cd_sec.alert_once('lock-'||p_role, 'Codes faux répétés ('||case p_role when 'admin' then 'admin' else 'dépôt' end||')',
         'Plusieurs codes faux ont été tapés à la suite : les essais sont bloqués pendant un moment.'||E'\n'||'Si ce n''est ni vous ni votre équipe, quelqu''un essaie de deviner le code : changez-le.');
     end if;
@@ -198,14 +209,14 @@ end $$;
 create or replace function staff_login(p_role text, p_pin text, p_label text default '', p_dev text default null) returns text language plpgsql volatile security definer set search_path=public as $$
 begin
   if p_role not in ('admin','depot') or not _pin_ok(p_role, p_pin, p_dev) then return null; end if;
-  return cd_sec.new_session(p_role, null, p_label);
+  return cd_sec.new_session(p_role, null, p_label, p_dev);
 end $$;
 
 create or replace function pair_device(p_pin text, p_resto text, p_label text default '', p_dev text default null) returns text language plpgsql volatile security definer set search_path=public as $$
 begin
   if not exists(select 1 from restaurants where id=p_resto) then raise exception 'Restaurant inconnu'; end if;
   if not _pin_ok('depot', p_pin, p_dev) then return null; end if;     -- code du dépôt ou de l'admin
-  return cd_sec.new_session('resto', p_resto, p_label);
+  return cd_sec.new_session('resto', p_resto, p_label, p_dev);
 end $$;
 
 create or replace function logout(p_tok text) returns void language sql volatile security definer set search_path=public as $$
@@ -309,6 +320,7 @@ begin perform _need('admin',p_pin);
   insert into app_private values ('pin_'||p_role||'_ok', to_char(now(),'YYYY-MM-DD')) on conflict (key) do update set value=excluded.value;
   insert into settings values ('pin_len', jsonb_build_object(p_role, length(v))) on conflict (key) do update set value = coalesce(settings.value,'{}'::jsonb) || excluded.value;
   -- les appareils connectés avec l'ancien code doivent retaper le nouveau (sauf celui qui fait le changement)
+  delete from cd_sec.devices where role=p_role and dev_hash <> coalesce((select dev_hash from cd_sec.sessions where token_hash = cd_sec.hash(p_pin)),'');
   delete from cd_sec.sessions where role=p_role and token_hash <> cd_sec.hash(p_pin);
   perform cd_sec.alert('Code '||case when p_role='admin' then 'admin' else 'du dépôt' end||' changé',
     'Le code '||case when p_role='admin' then 'admin' else 'du dépôt' end||' vient d''être changé. Les appareils '||case when p_role='admin' then 'admin' else 'du dépôt' end||' doivent retaper le nouveau code.');
@@ -332,10 +344,17 @@ end $$;
 -- p_id : un appareil ; sinon tous les appareils du rôle (ou de tous les rôles), sauf celui de l'admin qui le demande
 create or replace function admin_revoke_sessions(p_pin text, p_id bigint default null, p_role text default null) returns int
 language plpgsql volatile security definer set search_path=public as $$
-declare n int;
+declare n int; me text;
 begin perform _need('admin',p_pin);
-  if p_id is not null then delete from cd_sec.sessions where id=p_id;
-  else delete from cd_sec.sessions where (p_role is null or role=p_role) and token_hash <> cd_sec.hash(p_pin); end if;
+  -- l'appareil déconnecté est aussi oublié (il repasse par le compteur des appareils inconnus)
+  me := coalesce((select dev_hash from cd_sec.sessions where token_hash = cd_sec.hash(p_pin)),'');
+  if p_id is not null then
+    delete from cd_sec.devices where dev_hash <> me and dev_hash in (select s.dev_hash from cd_sec.sessions s where s.id=p_id and s.dev_hash <> '');
+    delete from cd_sec.sessions where id=p_id;
+  else
+    delete from cd_sec.devices where dev_hash <> me and (p_role is null or dev_hash in (select s.dev_hash from cd_sec.sessions s where s.role=p_role and s.dev_hash <> ''));
+    delete from cd_sec.sessions where (p_role is null or role=p_role) and token_hash <> cd_sec.hash(p_pin);
+  end if;
   get diagnostics n = row_count; return n;
 end $$;
 
