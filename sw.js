@@ -1,5 +1,5 @@
 // Service worker : ouverture instantanée (cache de l'app) + notifications.
-const V = "cd-v25";
+const V = "cd-v26";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon.svg", "icon-192.png", "apple-touch-icon.png"];
 // Bibliothèques hébergées avec l'app (même origine : pas de CDN tiers qui pourrait être piraté)
 const LIBS = ["lib/supabase.js", "lib/jspdf.umd.min.js", "lib/qrcode.js", "lib/html5-qrcode.min.js", "lib/xlsx.full.min.js"];
